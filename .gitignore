@@ -1,0 +1,6 @@
+/bin/
+/dist/
+*.exe
+/tmp/
+*.token
+.env
