@@ -1,0 +1,6 @@
+# tg
+
+- AGENTS.md — primary guide for AI coding agents (constraints, layout, commands, build)
+- README.md — human-oriented docs (install, BotFather, examples, pitfalls)
+
+Repo: https://github.com/xhelodev/tg (private)

@@ -9,17 +9,28 @@ Dos artefactos:
 
 Cero dependencias externas. Binario estático (`CGO_ENABLED=0`).
 
-## Instalación
+Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.txt)).
+
+## Instalación rápida
+
+Repo **privado**: hace falta acceso GitHub + Go ≥ 1.22. No hay `curl | bash` público de fuentes.
 
 ```bash
-git clone https://github.com/xhelodev/tg.git
-cd tg
-make install          # → $(go env GOPATH)/bin/tg
-# o
+# A) One-liner (clone + install.sh → $(go env GOPATH)/bin o TG_INSTALL_DIR/PREFIX)
+git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
+
+# B) go install (con GOPRIVATE)
+export GOPRIVATE=github.com/xhelodev/*
+go install github.com/xhelodev/tg/cmd/tg@latest
+
+# C) make (desde un clone)
+make install              # → $(go env GOPATH)/bin/tg
+make install-user PREFIX=$HOME/.local/bin   # o TG_INSTALL_DIR=...
 make build && ./bin/tg version
 ```
 
-Requiere Go ≥ 1.22.
+`./install.sh --help` / `--dry-run` documentan flags. Futuras releases binarias podrían permitir
+`curl -L …/tg_linux_amd64.tar.gz` (ver comentario en `.goreleaser.yaml` cuando exista).
 
 ## Crear el bot (@BotFather)
 

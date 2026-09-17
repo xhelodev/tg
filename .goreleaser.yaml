@@ -1,0 +1,17 @@
+# Stub / future: cuando se publiquen releases, un one-liner podría ser:
+#   curl -fsSL -o tg.tgz \
+#     https://github.com/xhelodev/tg/releases/latest/download/tg_Linux_x86_64.tar.gz \
+#     && tar -xzf tg.tgz -C /usr/local/bin tg
+# Hasta entonces usar ./install.sh o go install (repo privado + auth).
+#
+# Descomentar y ajustar cuando se active GoReleaser:
+# version: 2
+# builds:
+#   - id: tg
+#     main: ./cmd/tg
+#     binary: tg
+#     env: [CGO_ENABLED=0]
+#     goos: [linux, darwin, windows]
+#     goarch: [amd64, arm64]
+#     ldflags:
+#       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}}

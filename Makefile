@@ -4,8 +4,10 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 CGO     := 0
 BIN     := tg
+# PREFIX / TG_INSTALL_DIR: destino de install-user (default GOPATH/bin)
+PREFIX  ?= $(or $(TG_INSTALL_DIR),$(shell go env GOPATH)/bin)
 
-.PHONY: build test lint vet install cross smoke clean
+.PHONY: build test lint vet install install-user cross smoke clean
 
 build:
 	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o bin/$(BIN) ./cmd/tg
@@ -18,6 +20,12 @@ lint vet:
 
 install:
 	CGO_ENABLED=$(CGO) go install -ldflags "$(LDFLAGS)" ./cmd/tg
+
+# Igual que install pero fuerza GOBIN=PREFIX (útil con TG_INSTALL_DIR / PREFIX)
+install-user:
+	@mkdir -p "$(PREFIX)"
+	CGO_ENABLED=$(CGO) GOBIN="$(PREFIX)" go install -ldflags "$(LDFLAGS)" ./cmd/tg
+	@echo "→ $(PREFIX)/$(BIN)"
 
 cross:
 	@mkdir -p dist
