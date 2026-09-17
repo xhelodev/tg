@@ -16,20 +16,34 @@ Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.tx
 Repo **privado**: hace falta acceso GitHub + Go ≥ 1.22. No hay `curl | bash` público de fuentes.
 
 ```bash
-# A) One-liner (clone + install.sh → $(go env GOPATH)/bin o TG_INSTALL_DIR/PREFIX)
+# A) Clone por SSH (recomendado en VPS) + install offline
+git clone git@github.com:xhelodev/tg.git && cd tg && ./install.sh
+
+# A') Clone por HTTPS
 git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
 
-# B) go install (con GOPRIVATE)
+# B) go install (con GOPRIVATE; sí habla con la red / module proxy)
 export GOPRIVATE=github.com/xhelodev/*
 go install github.com/xhelodev/tg/cmd/tg@latest
 
-# C) make (desde un clone)
+# C) make desde un clone (build local, sin fetch)
 make install              # → $(go env GOPATH)/bin/tg
 make install-user PREFIX=$HOME/.local/bin   # o TG_INSTALL_DIR=...
 make build && ./bin/tg version
 ```
 
-`./install.sh --help` / `--dry-run` documentan flags. Futuras releases binarias podrían permitir
+**Ya clonaste por SSH?** `./install.sh` o `make install-user` construyen **offline**
+(`go build` local; no hacen `git ls-remote` ni piden credenciales HTTPS). Workaround
+one-liner si no quieres el script:
+
+```bash
+cd ~/tg && make install-user PREFIX=$HOME/.local/bin
+# o con proxy de módulos desactivado para forzar offline:
+cd ~/tg && GOPROXY=off make install-user PREFIX=$HOME/.local/bin
+```
+
+`./install.sh --help` / `--dry-run` documentan flags. Si no hay clone local, el script
+intenta **SSH primero**, luego HTTPS. Futuras releases binarias podrían permitir
 `curl -L …/tg_linux_amd64.tar.gz` (ver comentario en `.goreleaser.yaml` cuando exista).
 
 ## Crear el bot (@BotFather)

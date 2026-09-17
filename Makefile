@@ -18,13 +18,16 @@ test:
 lint vet:
 	go vet ./...
 
+# Build local → PREFIX (no go install / module proxy; módulo zero-deps es fully local)
 install:
-	CGO_ENABLED=$(CGO) go install -ldflags "$(LDFLAGS)" ./cmd/tg
+	@mkdir -p "$(PREFIX)"
+	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o "$(PREFIX)/$(BIN)" ./cmd/tg
+	@echo "→ $(PREFIX)/$(BIN)"
 
-# Igual que install pero fuerza GOBIN=PREFIX (útil con TG_INSTALL_DIR / PREFIX)
+# Alias explícito: mismo build local que install
 install-user:
 	@mkdir -p "$(PREFIX)"
-	CGO_ENABLED=$(CGO) GOBIN="$(PREFIX)" go install -ldflags "$(LDFLAGS)" ./cmd/tg
+	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o "$(PREFIX)/$(BIN)" ./cmd/tg
 	@echo "→ $(PREFIX)/$(BIN)"
 
 cross:
