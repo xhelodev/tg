@@ -118,3 +118,53 @@ func SplitChatThread(s string) (chatID string, threadID int) {
 	}
 	return s, 0
 }
+
+// Save escribe la configuración con permisos 0600 (crea el directorio si hace falta).
+func Save(path string, cfg *Config) error {
+	if path == "" {
+		path = DefaultPath()
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("creando directorio de config: %w", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializando config: %w", err)
+	}
+	data = append(data, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("escribiendo config temporal: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("renombrando config: %w", err)
+	}
+	// Asegurar 0600 tras rename (por si umask interfirió)
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("ajustando permisos: %w", err)
+	}
+	return nil
+}
+
+// SetProfileToken actualiza o crea un perfil con el token y fija default_profile si falta.
+func (c *Config) SetProfileToken(profileName, token string) string {
+	if c.Profiles == nil {
+		c.Profiles = map[string]Profile{}
+	}
+	name := profileName
+	if name == "" {
+		name = c.DefaultProfile
+	}
+	if name == "" {
+		name = "default"
+	}
+	p := c.Profiles[name]
+	p.Token = token
+	c.Profiles[name] = p
+	if c.DefaultProfile == "" {
+		c.DefaultProfile = name
+	}
+	return name
+}

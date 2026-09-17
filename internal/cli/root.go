@@ -67,6 +67,8 @@ func Run(args []string, ver VersionInfo) int {
 		return ExitOK
 	case "version":
 		return cmdVersion(rest, ver)
+	case "login":
+		return cmdLogin(ctx, rest)
 	case "me", "send", "edit", "edit-caption", "delete", "pin", "unpin",
 		"react", "forward", "copy", "action", "chat", "member":
 		return dispatch(ctx, cmd, rest, ver)
@@ -84,6 +86,7 @@ Uso:
   tg <comando> [flags] [args]
 
 Comandos:
+  login           guarda el token del bot en la config (BotFather)
   me              getMe — valida token y muestra bot
   send            sendMessage / sendPhoto / … 
   edit            editMessageText
