@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — clona (o reutiliza) github.com/xhelodev/tg e instala el binario tg.
 # Repo privado: hace falta git/gh autenticado + Go ≥ 1.22.
+# Si ya hay un clone local, la instalación es offline (sin tocar la red).
 set -euo pipefail
 
 REPO_SSH="git@github.com:xhelodev/tg.git"
@@ -27,7 +28,7 @@ Environment:
   TG_REPO_DIR               If set and is this repo, use it instead of cloning
 
 Examples:
-  git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
+  git clone git@github.com:xhelodev/tg.git && cd tg && ./install.sh
   TG_INSTALL_DIR=$HOME/.local/bin ./install.sh
   ./install.sh --dry-run
 USAGE
@@ -96,31 +97,35 @@ resolve_repo_dir() {
 
 REPO_DIR="$(resolve_repo_dir)"
 
+# Clona solo si no hay árbol local. Preferimos SSH (auth típica en VPS), luego HTTPS.
 ensure_clone() {
   if [[ -f "$REPO_DIR/cmd/tg/main.go" ]]; then
     echo "→ usando repo existente: $REPO_DIR"
     return
   fi
-  echo "→ clonando $REPO_HTTPS → $REPO_DIR"
+  echo "→ clonando $REPO_SSH → $REPO_DIR (SSH primero; HTTPS de respaldo)"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "+ git clone $REPO_HTTPS $REPO_DIR"
+    echo "+ git clone $REPO_SSH $REPO_DIR"
+    echo "+ # si falla: git clone $REPO_HTTPS $REPO_DIR"
     return
   fi
-  if git clone "$REPO_HTTPS" "$REPO_DIR" 2>/tmp/tg-install-clone.err; then
+  if git clone "$REPO_SSH" "$REPO_DIR" 2>/tmp/tg-install-clone.err; then
     return
   fi
-  echo "aviso: clone HTTPS falló; intentando SSH…" >&2
-  if git clone "$REPO_SSH" "$REPO_DIR" 2>>/tmp/tg-install-clone.err; then
+  echo "aviso: clone SSH falló; intentando HTTPS…" >&2
+  if git clone "$REPO_HTTPS" "$REPO_DIR" 2>>/tmp/tg-install-clone.err; then
     return
   fi
   cat >&2 <<'AUTH'
 error: no se pudo clonar el repo privado github.com/xhelodev/tg.
 
 Necesitas autenticación GitHub + acceso al repo, por ejemplo:
+  # SSH (recomendado en VPS)
+  ssh -T git@github.com
+  # o
   gh auth login
   # o
   git config --global url."https://x-access-token:TOKEN@github.com/".insteadOf "https://github.com/"
-  # o clave SSH con acceso al repo
 
 También:
   export GOPRIVATE=github.com/xhelodev/*
@@ -144,6 +149,7 @@ else
   echo "+ cd $REPO_DIR"
 fi
 
+# Instalación desde árbol local: go build offline, sin tocar la red.
 echo "→ make install-user PREFIX=$PREFIX"
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "+ make install-user PREFIX=$PREFIX"
@@ -151,21 +157,10 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   exit 0
 fi
 
-# Verify private module fetch would work for go install path
-if ! git ls-remote "$REPO_HTTPS" HEAD >/dev/null 2>&1 && ! git ls-remote "$REPO_SSH" HEAD >/dev/null 2>&1; then
-  cat >&2 <<'AUTH'
-error: git no puede hablar con github.com/xhelodev/tg (¿sin auth?).
-  gh auth status
-  export GOPRIVATE=github.com/xhelodev/*
-AUTH
-  exit 1
-fi
-
 make install-user PREFIX="$PREFIX"
 
 BIN="$PREFIX/tg"
 if [[ ! -x "$BIN" ]]; then
-  # go install may have used GOPATH/bin if GOBIN ignored on some setups
   ALT="$(go env GOPATH)/bin/tg"
   if [[ -x "$ALT" ]]; then
     BIN="$ALT"
