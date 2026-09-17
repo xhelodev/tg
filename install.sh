@@ -142,31 +142,29 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     git fetch --tags origin 2>/dev/null || true
     git checkout "$REF"
   fi
-  if [[ ! -f Makefile || ! -f cmd/tg/main.go ]]; then
-    die "no parece el repo tg (falta Makefile o cmd/tg)"
+  if [[ ! -f go.mod || ! -f cmd/tg/main.go ]]; then
+    die "no parece el repo tg (falta go.mod o cmd/tg)"
   fi
 else
   echo "+ cd $REPO_DIR"
 fi
 
 # Instalación desde árbol local: go build offline, sin tocar la red.
-echo "→ make install-user PREFIX=$PREFIX"
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT"
+echo "→ go build (CGO_ENABLED=0) PREFIX=$PREFIX"
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "+ make install-user PREFIX=$PREFIX"
+  echo "+ CGO_ENABLED=0 go build -ldflags \"$LDFLAGS\" -o \"$PREFIX/tg\" ./cmd/tg"
   echo "(dry-run OK)"
   exit 0
 fi
 
-make install-user PREFIX="$PREFIX"
+CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$PREFIX/tg" ./cmd/tg
 
 BIN="$PREFIX/tg"
 if [[ ! -x "$BIN" ]]; then
-  ALT="$(go env GOPATH)/bin/tg"
-  if [[ -x "$ALT" ]]; then
-    BIN="$ALT"
-  else
-    die "binario no encontrado en $PREFIX/tg tras make install"
-  fi
+  die "binario no encontrado en $PREFIX/tg tras go build"
 fi
 
 echo "✓ instalado: $BIN"

@@ -13,7 +13,8 @@ Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.tx
 
 ## Instalación rápida
 
-Repo **privado**: hace falta acceso GitHub + Go ≥ 1.22. No hay `curl | bash` público de fuentes.
+Repo **privado**: hace falta acceso GitHub + Go ≥ 1.22. `./install.sh` solo necesita `git` y Go;
+`make` es opcional. No hay `curl | bash` público de fuentes.
 
 ```bash
 # A) Clone por SSH (recomendado en VPS) + install offline
@@ -26,15 +27,16 @@ git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
 export GOPRIVATE=github.com/xhelodev/*
 go install github.com/xhelodev/tg/cmd/tg@latest
 
-# C) make desde un clone (build local, sin fetch)
+# C) Makefile opcional, desde un clone (build local, sin fetch)
 make install              # → $(go env GOPATH)/bin/tg
 make install-user PREFIX=$HOME/.local/bin   # o TG_INSTALL_DIR=...
 make build && ./bin/tg version
 ```
 
-**Ya clonaste por SSH?** `./install.sh` o `make install-user` construyen **offline**
-(`go build` local; no hacen `git ls-remote` ni piden credenciales HTTPS). Workaround
-one-liner si no quieres el script:
+**Ya clonaste por SSH?** `./install.sh` construye **offline** directamente con `go build`
+(no hace `git ls-remote` ni pide credenciales HTTPS), incluso si no tienes `make` instalado.
+El Makefile se conserva para quienes quieran usar sus targets. Workaround one-liner si no
+quieres el script:
 
 ```bash
 cd ~/tg && make install-user PREFIX=$HOME/.local/bin
