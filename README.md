@@ -28,12 +28,22 @@ Requiere Go ≥ 1.22.
 3. Copia el token (`123456789:AAH...`). **Nunca lo subas a git ni lo pases por `--token` en scripts compartidos.**
 
 ```bash
-# Recomendado
+# Recomendado: tg login (interactivo; no abre el navegador)
+tg login
+# o no interactivo
+tg login --token-file /ruta/segura/token
+
+# Alternativas
 export TG_BOT_TOKEN='123456789:AAH...'
 # o
 echo '123456789:AAH...' > ~/.config/tg/token && chmod 600 ~/.config/tg/token
 tg me --token-file ~/.config/tg/token
 ```
+
+`tg login` valida el token con `getMe`, lo guarda en el perfil activo de
+`~/.config/tg/config.json` (`$XDG_CONFIG_HOME`) con permisos `0600`, e imprime
+el username/id del bot (nunca el token). La entrada interactiva puede hacer eco;
+usa `--token-file` si prefieres no mostrarlo.
 
 ## Cómo obtener el `chat_id`
 
@@ -72,6 +82,7 @@ Ejemplo de config:
 ## Ejemplos
 
 ```bash
+tg login
 tg me
 tg send --chat 589215 "hola"
 echo hola | tg send 589215
