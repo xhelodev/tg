@@ -102,7 +102,7 @@ make install # → $(go env GOPATH)/bin/tg
 make cross   # dist/ multi OS/arch
 ```
 
-Instalación (repo privado): ver README § «Instalación rápida» / `./install.sh`.
+Instalación (repo privado): ver README § «Instalación rápida» / `./install.sh` (solo requiere git + Go; make es opcional).
 
 ## Notas para agentes
 
