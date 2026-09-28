@@ -102,7 +102,7 @@ make install # → $(go env GOPATH)/bin/tg
 make cross   # dist/ multi OS/arch
 ```
 
-Instalación (repo privado): ver README § «Instalación rápida» / `./install.sh` (solo requiere git + Go; make es opcional).
+Instalación: `go install github.com/xhelodev/tg/cmd/tg@latest` (ver README § «Instalación rápida»); alternativa `./install.sh` o `make install` desde un clone.
 
 ## Notas para agentes
 

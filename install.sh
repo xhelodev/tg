@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # install.sh — clona (o reutiliza) github.com/xhelodev/tg e instala el binario tg.
-# Repo privado: hace falta git/gh autenticado + Go ≥ 1.22.
-# Si ya hay un clone local, la instalación es offline (sin tocar la red).
+# Repo público: requiere git + Go ≥ 1.22. Si ya hay un clone local, no vuelve a clonar.
 set -euo pipefail
 
-REPO_SSH="git@github.com:xhelodev/tg.git"
-REPO_HTTPS="https://github.com/xhelodev/tg.git"
+REPO_URL="https://github.com/xhelodev/tg.git"
 MODULE="github.com/xhelodev/tg"
-DEFAULT_GOPRIVATE="github.com/xhelodev/*"
 
 usage() {
   cat <<'USAGE'
@@ -24,11 +21,11 @@ Options:
 
 Environment:
   TG_INSTALL_DIR / PREFIX   Install directory for the binary
-  GOPRIVATE                 Defaulted to github.com/xhelodev/* if unset
   TG_REPO_DIR               If set and is this repo, use it instead of cloning
 
 Examples:
-  git clone git@github.com:xhelodev/tg.git && cd tg && ./install.sh
+  git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
+  curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash
   TG_INSTALL_DIR=$HOME/.local/bin ./install.sh
   ./install.sh --dry-run
 USAGE
@@ -68,9 +65,6 @@ need_cmd go
 GO_VER="$(go env GOVERSION 2>/dev/null || go version)"
 echo "→ Go: $GO_VER"
 
-export GOPRIVATE="${GOPRIVATE:-$DEFAULT_GOPRIVATE}"
-echo "→ GOPRIVATE=$GOPRIVATE"
-
 PREFIX="${TG_INSTALL_DIR:-${PREFIX:-}}"
 if [[ -z "$PREFIX" ]]; then
   PREFIX="$(go env GOPATH)/bin"
@@ -97,41 +91,26 @@ resolve_repo_dir() {
 
 REPO_DIR="$(resolve_repo_dir)"
 
-# Clona solo si no hay árbol local. Preferimos SSH (auth típica en VPS), luego HTTPS.
 ensure_clone() {
   if [[ -f "$REPO_DIR/cmd/tg/main.go" ]]; then
     echo "→ usando repo existente: $REPO_DIR"
     return
   fi
-  echo "→ clonando $REPO_SSH → $REPO_DIR (SSH primero; HTTPS de respaldo)"
+  echo "→ clonando $REPO_URL → $REPO_DIR"
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "+ git clone $REPO_SSH $REPO_DIR"
-    echo "+ # si falla: git clone $REPO_HTTPS $REPO_DIR"
+    echo "+ git clone $REPO_URL $REPO_DIR"
     return
   fi
-  if git clone "$REPO_SSH" "$REPO_DIR" 2>/tmp/tg-install-clone.err; then
-    return
-  fi
-  echo "aviso: clone SSH falló; intentando HTTPS…" >&2
-  if git clone "$REPO_HTTPS" "$REPO_DIR" 2>>/tmp/tg-install-clone.err; then
-    return
-  fi
-  cat >&2 <<'AUTH'
-error: no se pudo clonar el repo privado github.com/xhelodev/tg.
+  if ! git clone "$REPO_URL" "$REPO_DIR" 2>/tmp/tg-install-clone.err; then
+    cat >&2 <<EOF
+error: no se pudo clonar $REPO_URL
 
-Necesitas autenticación GitHub + acceso al repo, por ejemplo:
-  # SSH (recomendado en VPS)
-  ssh -T git@github.com
-  # o
-  gh auth login
-  # o
-  git config --global url."https://x-access-token:TOKEN@github.com/".insteadOf "https://github.com/"
-
-También:
-  export GOPRIVATE=github.com/xhelodev/*
-AUTH
-  [[ -f /tmp/tg-install-clone.err ]] && cat /tmp/tg-install-clone.err >&2
-  exit 1
+Comprueba conexión a GitHub o clona manualmente:
+  git clone $REPO_URL && cd tg && ./install.sh
+EOF
+    [[ -f /tmp/tg-install-clone.err ]] && cat /tmp/tg-install-clone.err >&2
+    exit 1
+  fi
 }
 
 ensure_clone
@@ -143,24 +122,22 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     git checkout "$REF"
   fi
   if [[ ! -f go.mod || ! -f cmd/tg/main.go ]]; then
-    die "no parece el repo tg (falta go.mod o cmd/tg)"
+    die "no parece el repo tg (falta go.mod o cmd/tg/main.go)"
   fi
 else
   echo "+ cd $REPO_DIR"
 fi
 
-# Instalación desde árbol local: go build offline, sin tocar la red.
 VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT"
 echo "→ go build (CGO_ENABLED=0) PREFIX=$PREFIX"
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "+ CGO_ENABLED=0 go build -ldflags \"$LDFLAGS\" -o \"$PREFIX/tg\" ./cmd/tg"
+  echo "+ CGO_ENABLED=0 go build -ldflags \"-s -w -X main.version=$VERSION -X main.commit=$COMMIT\" -o \"$PREFIX/tg\" ./cmd/tg"
   echo "(dry-run OK)"
   exit 0
 fi
 
-CGO_ENABLED=0 go build -ldflags "$LDFLAGS" -o "$PREFIX/tg" ./cmd/tg
+CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o "$PREFIX/tg" ./cmd/tg
 
 BIN="$PREFIX/tg"
 if [[ ! -x "$BIN" ]]; then
