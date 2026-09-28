@@ -4,7 +4,6 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/xhelodev/tg.git"
-MODULE="github.com/xhelodev/tg"
 
 usage() {
   cat <<'USAGE'
