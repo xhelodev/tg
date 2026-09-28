@@ -13,40 +13,33 @@ Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.tx
 
 ## Instalación rápida
 
-Repo **privado**: hace falta acceso GitHub + Go ≥ 1.22. `./install.sh` solo necesita `git` y Go;
-`make` es opcional. No hay `curl | bash` público de fuentes.
+Requisito: **Go ≥ 1.22**. Asegúrate de que `$(go env GOPATH)/bin` esté en tu `PATH`.
 
 ```bash
-# A) Clone por SSH (recomendado en VPS) + install offline
-git clone git@github.com:xhelodev/tg.git && cd tg && ./install.sh
-
-# A') Clone por HTTPS
-git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
-
-# B) go install (con GOPRIVATE; sí habla con la red / module proxy)
-export GOPRIVATE=github.com/xhelodev/*
 go install github.com/xhelodev/tg/cmd/tg@latest
-
-# C) Makefile opcional, desde un clone (build local, sin fetch)
-make install              # → $(go env GOPATH)/bin/tg
-make install-user PREFIX=$HOME/.local/bin   # o TG_INSTALL_DIR=...
-make build && ./bin/tg version
 ```
 
-**Ya clonaste por SSH?** `./install.sh` construye **offline** directamente con `go build`
-(no hace `git ls-remote` ni pide credenciales HTTPS), incluso si no tienes `make` instalado.
-El Makefile se conserva para quienes quieran usar sus targets. Workaround one-liner si no
-quieres el script:
+**Alternativas** (compilar desde fuente; útil sin module proxy o para probar `main`):
 
 ```bash
-cd ~/tg && make install-user PREFIX=$HOME/.local/bin
-# o con proxy de módulos desactivado para forzar offline:
-cd ~/tg && GOPROXY=off make install-user PREFIX=$HOME/.local/bin
+git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
 ```
 
-`./install.sh --help` / `--dry-run` documentan flags. Si no hay clone local, el script
-intenta **SSH primero**, luego HTTPS. Futuras releases binarias podrían permitir
-`curl -L …/tg_linux_amd64.tar.gz` (ver comentario en `.goreleaser.yaml` cuando exista).
+One-liner (descarga el script y clona el repo si hace falta):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash
+```
+
+Desde un clone, también puedes usar `make`:
+
+```bash
+make install                              # → $(go env GOPATH)/bin/tg
+make install-user PREFIX=$HOME/.local/bin # o TG_INSTALL_DIR=...
+```
+
+`./install.sh --help` y `--dry-run` documentan `--ref`, `--dir` y `TG_INSTALL_DIR`.
+Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar.
 
 ## Crear el bot (@BotFather)
 
@@ -204,3 +197,7 @@ make smoke   # requiere TG_BOT_TOKEN y TG_TEST_CHAT
 ```
 
 Fuera de alcance en v1: webhooks, `getUpdates` daemon, callbacks, pagos, polls, stories, inline mode.
+
+## Licencia
+
+[MIT](LICENSE) — Copyright © 2026 Marcelo Aguirre (xhelodev).
