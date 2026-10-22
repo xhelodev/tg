@@ -16,18 +16,20 @@ type Limiter struct {
 }
 
 type bucket struct {
-	tokens   float64
-	max      float64
-	rate     float64 // tokens por segundo
-	last     time.Time
+	tokens float64
+	max    float64
+	rate   float64 // tokens por segundo
+	last   time.Time
 }
 
 // NewLimiter crea un limitador con ~30 msg/s globales y 1 msg/s por chat.
+// El balde global arranca con 1 token (no 30): sin ello la primera ráfaga
+// dispararía 30 mensajes de golpe y provocaría 429.
 func NewLimiter() *Limiter {
 	now := time.Now()
 	return &Limiter{
 		global: &bucket{
-			tokens: 30,
+			tokens: 1,
 			max:    30,
 			rate:   30,
 			last:   now,

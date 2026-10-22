@@ -15,7 +15,7 @@ Docs humanas: [README.md](README.md). Este archivo es la referencia compacta par
 | Zero deps | Solo stdlib en `go.mod`. No añadir módulos de terceros. |
 | Nunca imprimir el token | stdout/stderr/logs/JSON de error: nunca el valor del token. |
 | `CGO_ENABLED=0` | Builds (`go build` / install local) siempre estáticos. |
-| Exit codes | `0` ok · `1` bug · `2` uso · `3` config/token · `4` API `ok:false` · `5` red |
+| Exit codes | `0` ok · `1` bug · `2` uso · `3` config/token · `4` API `ok:false` · `5` red · `130` interrumpido (Ctrl-C) |
 | Librería limpia | `pkg/telegram` no llama `os.Exit` ni imprime a stdout. |
 
 ## Layout

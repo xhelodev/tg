@@ -1,12 +1,10 @@
 package telegram
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net/textproto"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,13 +13,13 @@ import (
 
 // Límites documentados (ajustables; no hardcodear en call sites).
 const (
-	MaxTextLength       = 4096
-	MaxCaptionLength    = 1024
-	MaxPhotoURLBytes    = 5 << 20  // 5 MB
-	MaxOtherURLBytes    = 20 << 20 // 20 MB
-	MaxPhotoMultipart   = 10 << 20 // 10 MB
-	MaxOtherMultipart   = 50 << 20 // 50 MB
-	MaxLocalAPIBytes    = 2000 << 20
+	MaxTextLength     = 4096
+	MaxCaptionLength  = 1024
+	MaxPhotoURLBytes  = 5 << 20  // 5 MB
+	MaxOtherURLBytes  = 20 << 20 // 20 MB
+	MaxPhotoMultipart = 10 << 20 // 10 MB
+	MaxOtherMultipart = 50 << 20 // 50 MB
+	MaxLocalAPIBytes  = 2000 << 20
 )
 
 // MediaKind identifica el tipo de media a enviar.
@@ -39,8 +37,8 @@ const (
 
 // SendMediaRequest describe un envío de media (file_id, URL o ruta local).
 type SendMediaRequest struct {
-	ChatID              string
-	Kind                MediaKind
+	ChatID string
+	Kind   MediaKind
 	// Exactamente uno de FileID, URL, FilePath debe estar set.
 	FileID   string
 	URL      string
@@ -161,49 +159,70 @@ func (c *Client) sendMediaMultipart(ctx context.Context, method string, req Send
 	}
 	defer f.Close()
 
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-
-	_ = w.WriteField("chat_id", req.ChatID)
-	if req.Caption != "" {
-		_ = w.WriteField("caption", req.Caption)
-	}
-	if req.ParseMode != "" {
-		_ = w.WriteField("parse_mode", req.ParseMode)
-	}
-	if req.MessageThreadID != nil {
-		_ = w.WriteField("message_thread_id", strconv.Itoa(*req.MessageThreadID))
-	}
-	if req.DisableNotification != nil {
-		_ = w.WriteField("disable_notification", strconv.FormatBool(*req.DisableNotification))
-	}
-	if req.ProtectContent != nil {
-		_ = w.WriteField("protect_content", strconv.FormatBool(*req.ProtectContent))
-	}
-	if req.ReplyToMessageID != nil {
-		_ = w.WriteField("reply_to_message_id", strconv.Itoa(*req.ReplyToMessageID))
-	}
-
-	field := string(req.Kind)
-	filename := filepath.Base(req.FilePath)
-	h := make(textproto.MIMEHeader)
-	h.Set("Content-Disposition",
-		fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, filename))
-	h.Set("Content-Type", "application/octet-stream")
-	part, err := w.CreatePart(h)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
-		return nil, err
+	// newBody construye el multipart en streaming (io.Pipe): el archivo no
+	// se carga entero en RAM. Se invoca una vez por intento, así que cada
+	// reintento 429 rebobina el archivo y reconstruye el cuerpo.
+	newBody := func() (io.Reader, string, error) {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, "", err
+		}
+		pr, pw := io.Pipe()
+		w := multipart.NewWriter(pw)
+		go func() {
+			pw.CloseWithError(writeMultipartForm(w, f, req))
+		}()
+		return pr, w.FormDataContentType(), nil
 	}
 
 	var msg Message
-	if err := c.doMultipart(ctx, method, buf.Bytes(), w.FormDataContentType(), req.ChatID, &msg); err != nil {
+	if err := c.do(ctx, method, newBody, req.ChatID, &msg); err != nil {
 		return nil, err
 	}
 	return &msg, nil
+}
+
+// writeMultipartForm escribe los campos y el archivo en w y lo cierra.
+func writeMultipartForm(w *multipart.Writer, f *os.File, req SendMediaRequest) error {
+	if err := w.WriteField("chat_id", req.ChatID); err != nil {
+		return err
+	}
+	if req.Caption != "" {
+		if err := w.WriteField("caption", req.Caption); err != nil {
+			return err
+		}
+	}
+	if req.ParseMode != "" {
+		if err := w.WriteField("parse_mode", req.ParseMode); err != nil {
+			return err
+		}
+	}
+	if req.MessageThreadID != nil {
+		if err := w.WriteField("message_thread_id", strconv.Itoa(*req.MessageThreadID)); err != nil {
+			return err
+		}
+	}
+	if req.DisableNotification != nil {
+		if err := w.WriteField("disable_notification", strconv.FormatBool(*req.DisableNotification)); err != nil {
+			return err
+		}
+	}
+	if req.ProtectContent != nil {
+		if err := w.WriteField("protect_content", strconv.FormatBool(*req.ProtectContent)); err != nil {
+			return err
+		}
+	}
+	if req.ReplyToMessageID != nil {
+		if err := w.WriteField("reply_to_message_id", strconv.Itoa(*req.ReplyToMessageID)); err != nil {
+			return err
+		}
+	}
+	// CreateFormFile escapa el filename (comillas y caracteres especiales).
+	part, err := w.CreateFormFile(string(req.Kind), filepath.Base(req.FilePath))
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return err
+	}
+	return w.Close()
 }

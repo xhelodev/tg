@@ -17,6 +17,7 @@ test:
 
 lint vet:
 	go vet ./...
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt necesita formatear:"; echo "$$out"; exit 1; fi
 
 # Build local → PREFIX (no go install / module proxy; módulo zero-deps es fully local)
 install:
