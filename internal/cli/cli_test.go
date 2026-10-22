@@ -17,15 +17,20 @@ import (
 // TestMain aísla los tests del entorno real: sin config del usuario
 // (~/.config/tg con token real) ni tokens en el entorno. Sin esto, los
 // tests hacían llamadas reales a la Bot API cuando la máquina tenía token.
+// Nota: os.Setenv es global al proceso; la suite no usa t.Parallel, así
+// que es seguro (y los t.Setenv individuales siguen funcionando).
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "tg-test-xdg")
 	if err == nil {
 		os.Setenv("XDG_CONFIG_HOME", dir)
-		defer os.RemoveAll(dir)
 	}
 	os.Unsetenv("TG_BOT_TOKEN")
 	os.Unsetenv("TELEGRAM_BOT_TOKEN")
-	os.Exit(m.Run())
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
 }
 
 func TestRun_Version(t *testing.T) {

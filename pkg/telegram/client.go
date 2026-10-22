@@ -188,7 +188,8 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 
 		body, contentType, err := newBody()
 		if err != nil {
-			return &ValidationError{Message: "construyendo body: " + err.Error()}
+			// Fallo local de E/S (p.ej. f.Seek): no es error del usuario.
+			return fmt.Errorf("construyendo body: %w", err)
 		}
 
 		url := c.methodURL(method)

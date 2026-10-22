@@ -93,3 +93,83 @@ func TestSplitText_Multibyte(t *testing.T) {
 		t.Fatalf("runas perdidas: %d", total)
 	}
 }
+
+// Regresión: en el último tramo, si el encogimiento redujo el corte debía
+// conservarse la reapertura; antes el </b> original quedaba huérfano
+// (parte 3 = "[3/3] aaaa</b>") y Telegram devolvía 400.
+func TestSplitText_UltimoTramoEncogido_ConservaReapertura(t *testing.T) {
+	text := "<b>" + strings.Repeat("a", 1970) + "</b>"
+	parts := SplitText(text, 1000)
+	for i, p := range parts {
+		if strings.Count(p, "<b>") != strings.Count(p, "</b>") {
+			t.Fatalf("parte %d desbalanceada: %q", i, p)
+		}
+	}
+}
+
+// Regresión: "2026: balance" es texto con dos puntos, no chat:thread.
+func TestLooksLikeChat_Espacios(t *testing.T) {
+	for _, s := range []string{"2026: balance del año", "1: hola", "589215 mundo"} {
+		if looksLikeChat(s) {
+			t.Errorf("%q no debe parecer chat", s)
+		}
+	}
+	if !looksLikeChat("-100123:42") || !looksLikeChat("589215") {
+		t.Fatal("IDs legítimos rechazados")
+	}
+}
+
+// Comentarios HTML no se balancean y los '>' dentro de atributos entre
+// comillas no cierran la etiqueta.
+func TestSplitText_ComentariosYAtributosConComillas(t *testing.T) {
+	text := "<!-- nota: hola --><a href=\"x>y\">enlace " + strings.Repeat("z", 3000) + "</a>"
+	parts := SplitText(text, 500)
+	for i, p := range parts {
+		if strings.Count(p, "<a ") != strings.Count(p, "</a>") {
+			t.Fatalf("parte %d desbalanceada: %q", i, p[:60])
+		}
+		if strings.Contains(p, "</>") {
+			t.Fatalf("parte %d con cierre basura de comentario: %q", i, p[:60])
+		}
+	}
+}
+
+// Con maxLen chico se parte sin prefijos y sin pérdida.
+func TestSplitText_MaxLenChico_SinNumeracion(t *testing.T) {
+	text := strings.Repeat("w", 200)
+	parts := SplitText(text, 20)
+	got := 0
+	for _, p := range parts {
+		if utf8.RuneCountInString(p) > 20 {
+			t.Fatalf("parte de %d runas > 20", utf8.RuneCountInString(p))
+		}
+		if strings.HasPrefix(p, "[") {
+			t.Fatalf("no debe haber prefijo con maxLen chico: %q", p)
+		}
+		got += utf8.RuneCountInString(p)
+	}
+	if got != 200 {
+		t.Fatalf("runas perdidas: %d", got)
+	}
+}
+
+// Muchas partes: la reserva del prefijo se ajusta a punto fijo; el contenido
+// no se recorta (garantía "sin pérdida" también con prefijos anchos).
+func TestSplitText_MuchasPartes_ReservaPuntoFijo(t *testing.T) {
+	text := strings.Repeat("q", 4000)
+	parts := SplitText(text, 40)
+	got := 0
+	for _, p := range parts {
+		if utf8.RuneCountInString(p) > 40 {
+			t.Fatalf("parte de %d runas > 40", utf8.RuneCountInString(p))
+		}
+		body := p
+		if i := strings.Index(p, "] "); i >= 0 {
+			body = p[i+2:]
+		}
+		got += utf8.RuneCountInString(body)
+	}
+	if got != 4000 {
+		t.Fatalf("runas perdidas: %d", got)
+	}
+}

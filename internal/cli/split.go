@@ -8,10 +8,14 @@ import (
 	"github.com/xhelodev/tg/pkg/telegram"
 )
 
-// prefixReserve reserva runas para el prefijo "[i/n] " (peor caso razonable:
-// "[8888/8888] " = 12). Garantiza que cuerpo + prefijo ≤ maxLen sin
-// descartar texto en silencio.
-const prefixReserve = 12
+// prefixReserveBase reserva runas para el prefijo "[i/n] " en la primera
+// pasada ("[8888/8888] " = 12). La reserva definitiva se calcula a punto
+// fijo según el número de partes (ver SplitText).
+const prefixReserveBase = 12
+
+// Sin numeración no hay garantía que cumplir; con maxLen muy chico se parte
+// sin prefijos antes que descartar texto.
+const minNumberedMaxLen = 32
 
 // voidTags no llevan cierre en HTML (no balancear).
 var voidTags = map[string]bool{"br": true, "hr": true, "img": true}
@@ -28,10 +32,36 @@ func SplitText(text string, maxLen int) []string {
 	if utf8.RuneCountInString(text) <= maxLen {
 		return []string{text}
 	}
-	budget := maxLen - prefixReserve
-	if budget < 16 {
-		// maxLen demasiado chico para prefijo seguro: cortar al máximo
-		budget = maxLen
+	if maxLen < minNumberedMaxLen {
+		// Sin prefijos: la garantía es sin pérdida, no numeración.
+		return splitBodies(text, maxLen, 0)
+	}
+	// Punto fijo: la reserva depende del nº de partes y viceversa.
+	// needed crece log(n), así que converge en 2-3 iteraciones.
+	reserve := prefixReserveBase
+	for i := 0; i < 8; i++ {
+		parts := splitBodies(text, maxLen, reserve)
+		n := len(parts)
+		if n <= 1 {
+			return parts
+		}
+		needed := utf8.RuneCountInString(fmt.Sprintf("[%d/%d] ", n, n))
+		if needed <= reserve {
+			return numberParts(parts, maxLen)
+		}
+		reserve = needed
+	}
+	// Texto desmesurado (no converge): reserva holgada fija; cubre
+	// prefijos de hasta 8 dígitos por lado.
+	return numberParts(splitBodies(text, maxLen, 20), maxLen)
+}
+
+// splitBodies parte el texto en cuerpos ≤ maxLen-reserve con HTML
+// balanceado; SIN numerar (los prefijos los añade numberParts).
+func splitBodies(text string, maxLen, reserve int) []string {
+	budget := maxLen - reserve
+	if budget < 1 {
+		budget = 1
 	}
 
 	var parts []string
@@ -60,7 +90,10 @@ func SplitText(text string, maxLen int) []string {
 			chunk = string(runes[:cut])
 			closers, reopen = closeOpenTags(chunk)
 		}
-		if isLast {
+		if cut == len(runes) {
+			// Último tramo real (nada queda detrás): no hay parte que
+			// reabrir. OJO: si el encogimiento redujo cut, quedan runas
+			// y reopen DEBE conservarse o el </b> original queda huérfano.
 			reopen = ""
 		}
 		parts = append(parts, chunk+closers)
@@ -72,6 +105,13 @@ func SplitText(text string, maxLen int) []string {
 		runes = rest
 	}
 
+	return parts
+}
+
+// numberParts añade prefijos "[i/n] ". Por construcción del punto fijo el
+// prefijo cabe en la reserva, así que el recorte de seguridad no debería
+// dispararse jamás; queda como cinturón y tirantes.
+func numberParts(parts []string, maxLen int) []string {
 	if len(parts) <= 1 {
 		return parts
 	}
@@ -106,7 +146,8 @@ func chooseCut(runes []rune, budget int) int {
 	}
 	for cut > 1 {
 		chunk := string(runes[:cut])
-		if open := strings.LastIndex(chunk, "<"); open >= 0 && strings.Index(chunk[open:], ">") < 0 {
+		// '<' sin '>' que lo cierre (respetando comillas): cortar antes.
+		if open := strings.LastIndex(chunk, "<"); open >= 0 && tagEnd(chunk, open) < 0 {
 			cut = open
 			continue
 		}
@@ -118,10 +159,37 @@ func chooseCut(runes []rune, budget int) int {
 	return cut
 }
 
+// tagEnd devuelve el índice del '>' que cierra la etiqueta que abre en
+// start ('<'), respetando comillas dentro de atributos (`<a href="x>y">`);
+// -1 si la etiqueta queda sin cerrar en s.
+func tagEnd(s string, start int) int {
+	inQuote := byte(0)
+	for i := start + 1; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			if c == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			inQuote = c
+		case '>':
+			return i
+		}
+	}
+	return -1
+}
+
 // closeOpenTags analiza chunk (que arranca con las etiquetas de la parte
 // anterior ya reabiertas, así que ninguna pila se hereda) y devuelve los
 // cierres a añadir al final para dejarlo balanceado y la reapertura a
 // anteponer a la siguiente parte. Función pura: no mantiene estado.
+//
+// Límites conocidos (documentados): los comentarios `<!-- … -->` se
+// omiten (no se balancean), y un comentario/etiqueta sin cierre dentro
+// del chunk hace cortar antes de su '<'.
 func closeOpenTags(chunk string) (closers, reopen string) {
 	var stack []string
 	for i := 0; i < len(chunk); {
@@ -129,12 +197,23 @@ func closeOpenTags(chunk string) (closers, reopen string) {
 			i++
 			continue
 		}
-		end := strings.IndexByte(chunk[i:], '>')
+		// Comentarios HTML: región ignorada, no se balancea.
+		if strings.HasPrefix(chunk[i:], "<!--") {
+			end := strings.Index(chunk[i:], "-->")
+			if end < 0 {
+				break
+			}
+			i += end + 3
+			continue
+		}
+		end := tagEnd(chunk, i)
 		if end < 0 {
 			break
 		}
-		tag := chunk[i+1 : i+end]
+		tag := chunk[i+1 : end]
 		switch {
+		case strings.HasPrefix(tag, "!"):
+			// declaraciones <!…>: no balancean
 		case strings.HasPrefix(tag, "/"):
 			name := tagName(tag[1:])
 			for j := len(stack) - 1; j >= 0; j-- {
@@ -146,7 +225,7 @@ func closeOpenTags(chunk string) (closers, reopen string) {
 		case !strings.HasSuffix(tag, "/") && !voidTags[tagName(tag)]:
 			stack = append(stack, tag)
 		}
-		i += end + 1
+		i = end + 1
 	}
 	for j := len(stack) - 1; j >= 0; j-- {
 		closers += "</" + tagName(stack[j]) + ">"

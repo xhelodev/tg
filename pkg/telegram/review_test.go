@@ -119,12 +119,10 @@ func TestSendMedia_Multipart_Retry429_Reenvia(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	var bodies [2]int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
 		b, _ := readAllLimit(r)
 		if n <= 2 {
-			bodies[n-1] = len(b)
 			// responder 429 sin consumir todo el body (rechazo temprano)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok": false, "error_code": 429, "description": "Too Many Requests",
@@ -132,7 +130,6 @@ func TestSendMedia_Multipart_Retry429_Reenvia(t *testing.T) {
 			})
 			return
 		}
-		bodies[1] = len(b)
 		if !strings.Contains(string(b), content) {
 			t.Errorf("reintento sin contenido completo: %d bytes", len(b))
 		}

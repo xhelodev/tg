@@ -359,10 +359,13 @@ func resolveChat(g *GlobalFlags, prof config.Profile, pos []string) (chatID stri
 }
 
 // looksLikeChat solo acepta formas inequívocas de destino: @username,
-// ID numérico (opcionalmente negativo) e "id:thread". Las palabras sueltas
-// NO son chats: sin alias ni default_chat se devuelve error de uso.
+// ID numérico (opcionalmente negativo) e "id:thread" — sin espacios en
+// ningún caso ("2026: balance" es texto, no chat:thread). Las palabras
+// sueltas NO son chats: sin alias ni default_chat se devuelve error de uso.
 func looksLikeChat(s string) bool {
-	if s == "" || s == "-" {
+	if s == "" || s == "-" || strings.ContainsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '	' || r == '\n'
+	}) {
 		return false
 	}
 	if strings.HasPrefix(s, "@") {
@@ -404,6 +407,8 @@ func mediaFromFlags(photo, video, audio, voice, animation, document, sticker str
 	return nil
 }
 
+// Limitaciones conocidas: rutas Windows absolutas ("C:\\foto.jpg") y
+// "~usuario/x" no se detectan como ruta y acabarían tratadas como file_id.
 func classifyMediaRef(ref string) (fileID, url, path string, err error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		return "", ref, "", nil
