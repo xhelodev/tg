@@ -1,17 +1,37 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xhelodev/tg/internal/config"
 	"github.com/xhelodev/tg/pkg/telegram"
 )
+
+// TestMain aísla los tests del entorno real: sin config del usuario
+// (~/.config/tg con token real) ni tokens en el entorno. Sin esto, los
+// tests hacían llamadas reales a la Bot API cuando la máquina tenía token.
+// Nota: os.Setenv es global al proceso; la suite no usa t.Parallel, así
+// que es seguro (y los t.Setenv individuales siguen funcionando).
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "tg-test-xdg")
+	if err == nil {
+		os.Setenv("XDG_CONFIG_HOME", dir)
+	}
+	os.Unsetenv("TG_BOT_TOKEN")
+	os.Unsetenv("TELEGRAM_BOT_TOKEN")
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
+}
 
 func TestRun_Version(t *testing.T) {
 	code := Run([]string{"version"}, VersionInfo{Version: "1.0.0", Commit: "abc"})
@@ -145,7 +165,9 @@ func TestRun_Send_JSON(t *testing.T) {
 
 func TestLooksLikeChat(t *testing.T) {
 	cases := map[string]bool{
-		"@canal": true, "589215": true, "-1001": true, "alertas": true,
+		"@canal": true, "589215": true, "-1001": true, "-100123:42": true,
+		// palabras sueltas ya no son chats (evita tragar el texto como destino)
+		"alertas": false, "hola": false,
 		"-": false, "": false,
 	}
 	for s, want := range cases {
@@ -155,16 +177,51 @@ func TestLooksLikeChat(t *testing.T) {
 	}
 }
 
-func TestClassifyMediaRef(t *testing.T) {
-	id, url, path := classifyMediaRef("https://x.com/a.jpg")
-	if url == "" || id != "" || path != "" {
-		t.Fatal(id, url, path)
+func TestResolveChat_AliasYTexto(t *testing.T) {
+	prof := config.Profile{
+		Aliases: map[string]string{"alertas": "-1001234567890:42"},
 	}
-	id, url, path = classifyMediaRef("AgAC123")
-	if id != "AgAC123" {
-		t.Fatal(id)
+	g := &GlobalFlags{}
+	// alias posicional: se consume como chat
+	chat, thread, consumed, err := resolveChat(g, prof, []string{"alertas", "hola"})
+	if err != nil || chat != "-1001234567890" || thread != 42 || !consumed {
+		t.Fatalf("chat=%q thread=%d consumed=%v err=%v", chat, thread, consumed, err)
+	}
+	// palabra suelta sin default: error de uso, no destino inventado
+	_, _, _, err = resolveChat(g, prof, []string{"hola"})
+	if err == nil {
+		t.Fatal("esperado error con palabra suelta sin chat")
+	}
+	// con default_chat la palabra es texto y no se consume
+	prof2 := config.Profile{DefaultChat: "589215"}
+	chat, _, consumed, err = resolveChat(g, prof2, []string{"hola"})
+	if err != nil || chat != "589215" || consumed {
+		t.Fatalf("chat=%q consumed=%v err=%v", chat, consumed, err)
 	}
 }
 
-// silenciar unused en tests
-var _ = bytes.Buffer{}
+func TestClassifyMediaRef(t *testing.T) {
+	id, url, path, err := classifyMediaRef("https://x.com/a.jpg")
+	if err != nil || url == "" || id != "" || path != "" {
+		t.Fatal(id, url, path, err)
+	}
+	id, url, path, err = classifyMediaRef("AgAC123")
+	if err != nil || id != "AgAC123" || url != "" || path != "" {
+		t.Fatal(id, url, path, err)
+	}
+	// ruta inexistente con forma de ruta: error local, no file_id
+	_, _, _, err = classifyMediaRef("./fto.jpg")
+	if err == nil || !strings.Contains(err.Error(), "no encontrado") {
+		t.Fatalf("esperado error de archivo, got %v", err)
+	}
+	// ruta existente
+	dir := t.TempDir()
+	p := filepath.Join(dir, "foto.jpg")
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, url, path, err = classifyMediaRef(p)
+	if err != nil || path != p || id != "" || url != "" {
+		t.Fatal(id, url, path, err)
+	}
+}

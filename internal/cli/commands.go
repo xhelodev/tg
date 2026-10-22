@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 	"unicode/utf8"
 
@@ -25,18 +26,17 @@ func runMe(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags) i
 }
 
 func runSend(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, pos []string, media *mediaFlag) int {
-	chatID, threadID, err := resolveChat(&g, prof, pos)
+	chatID, threadID, chatConsumed, err := resolveChat(&g, prof, pos)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
 	}
-	chatConsumed := g.Chat == "" // chat vino del posicional
 
 	if media != nil {
 		return runSendMedia(ctx, c, pr, g, chatID, threadID, media)
 	}
 
-	text, fromStdin, err := readText(&g, pos, chatConsumed)
+	text, _, err := readText(&g, pos, chatConsumed)
 	if err != nil {
 		PrintErr("texto: %v", err)
 		return ExitUsage
@@ -47,9 +47,9 @@ func runSend(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 		return ExitUsage
 	}
 
-	// html-escape por defecto si stdin
-	doEscape := g.HTMLEscape || fromStdin
-	if doEscape && g.ParseMode == "HTML" {
+	// html-escape SOLO si se pide explícitamente (--html-escape): escapar
+	// por defecto con stdin rompía HTML legítimo como "<b>alerta</b>".
+	if g.HTMLEscape && g.ParseMode == "HTML" {
 		text = escapeHTML(text)
 	}
 
@@ -68,15 +68,24 @@ func runSend(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 	}
 
 	if g.DryRun {
+		var payloads []map[string]any
 		for i, p := range parts {
-			payload := map[string]any{
+			pl := map[string]any{
 				"chat_id": chatID, "text": p, "parse_mode": g.ParseMode,
 			}
 			if threadPtr != nil {
-				payload["message_thread_id"] = *threadPtr
+				pl["message_thread_id"] = *threadPtr
 			}
-			b, _ := json.MarshalIndent(payload, "", "  ")
-			PrintErr("dry-run sendMessage [%d/%d] token=%s\n%s", i+1, len(parts), c.TokenRedacted(), b)
+			payloads = append(payloads, pl)
+			if !g.JSON {
+				b, _ := json.MarshalIndent(pl, "", "  ")
+				PrintErr("dry-run sendMessage [%d/%d] token=%s\n%s", i+1, len(parts), c.TokenRedacted(), b)
+			}
+		}
+		if g.JSON {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"dry_run": true, "method": "sendMessage", "payload": payloads,
+			})
 		}
 		return ExitOK
 	}
@@ -113,14 +122,16 @@ func runSend(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 	}
 	if g.Quiet || g.JSON || len(parts) == 1 {
 		pr.Message(last)
-	} else if last != nil {
-		// ya se imprimieron partes; última ya impresa arriba — ok
 	}
 	return ExitOK
 }
 
 func runSendMedia(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, chatID string, threadID int, media *mediaFlag) int {
-	fileID, url, path := classifyMediaRef(media.Ref)
+	fileID, url, path, err := classifyMediaRef(media.Ref)
+	if err != nil {
+		PrintErr("%v", err)
+		return ExitUsage
+	}
 	var threadPtr *int
 	if threadID > 0 {
 		threadPtr = &threadID
@@ -152,6 +163,13 @@ func runSendMedia(ctx context.Context, c *telegram.Client, pr Printer, g GlobalF
 	}
 
 	if g.DryRun {
+		if g.JSON {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"dry_run": true, "method": "send" + media.Kind,
+				"chat_id": chatID, "ref": media.Ref,
+			})
+			return ExitOK
+		}
 		PrintErr("dry-run send%s chat=%s ref=%s token=%s", media.Kind, chatID, media.Ref, c.TokenRedacted())
 		return ExitOK
 	}
@@ -172,7 +190,7 @@ func runSendMedia(ctx context.Context, c *telegram.Client, pr Printer, g GlobalF
 }
 
 func runEdit(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, pos []string, messageID int) int {
-	chatID, _, err := resolveChat(&g, prof, pos)
+	chatID, _, consumed, err := resolveChat(&g, prof, pos)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -181,16 +199,22 @@ func runEdit(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 		PrintErr("indique --message-id")
 		return ExitUsage
 	}
-	chatConsumed := g.Chat == ""
-	text, fromStdin, err := readText(&g, pos, chatConsumed)
+	text, _, err := readText(&g, pos, consumed)
 	if err != nil || text == "" {
 		PrintErr("texto requerido")
 		return ExitUsage
 	}
-	if (g.HTMLEscape || fromStdin) && g.ParseMode == "HTML" {
+	if g.HTMLEscape && g.ParseMode == "HTML" {
 		text = escapeHTML(text)
 	}
 	if g.DryRun {
+		if g.JSON {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"dry_run": true, "method": "editMessageText",
+				"chat_id": chatID, "message_id": messageID, "text": text,
+			})
+			return ExitOK
+		}
 		PrintErr("dry-run editMessageText chat=%s msgid=%d token=%s", chatID, messageID, c.TokenRedacted())
 		return ExitOK
 	}
@@ -209,7 +233,7 @@ func runEdit(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 }
 
 func runEditCaption(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, pos []string, messageID int) int {
-	chatID, _, err := resolveChat(&g, prof, pos)
+	chatID, _, consumed, err := resolveChat(&g, prof, pos)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -220,8 +244,7 @@ func runEditCaption(ctx context.Context, c *telegram.Client, pr Printer, g Globa
 	}
 	caption := g.Caption
 	if caption == "" {
-		chatConsumed := g.Chat == ""
-		caption, _, err = readText(&g, pos, chatConsumed)
+		caption, _, err = readText(&g, pos, consumed)
 		if err != nil {
 			PrintErr("%v", err)
 			return ExitUsage
@@ -246,7 +269,7 @@ func runEditCaption(ctx context.Context, c *telegram.Client, pr Printer, g Globa
 }
 
 func runDelete(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, pos []string, messageID int) int {
-	chatID, _, err := resolveChat(&g, prof, pos)
+	chatID, _, _, err := resolveChat(&g, prof, pos)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -267,7 +290,7 @@ func runDelete(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlag
 }
 
 func runPin(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, messageID int, pin bool) int {
-	chatID, _, err := resolveChat(&g, prof, nil)
+	chatID, _, _, err := resolveChat(&g, prof, nil)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -301,7 +324,7 @@ func runPin(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, 
 }
 
 func runReact(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, messageID int, emoji string, big bool) int {
-	chatID, _, err := resolveChat(&g, prof, nil)
+	chatID, _, _, err := resolveChat(&g, prof, nil)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -329,7 +352,7 @@ func runReact(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags
 }
 
 func runForward(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, fromChat string, messageID int, copy bool) int {
-	chatID, threadID, err := resolveChat(&g, prof, nil)
+	chatID, threadID, _, err := resolveChat(&g, prof, nil)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -381,7 +404,7 @@ func runForward(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFla
 }
 
 func runAction(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, action string) int {
-	chatID, threadID, err := resolveChat(&g, prof, nil)
+	chatID, threadID, _, err := resolveChat(&g, prof, nil)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -404,7 +427,7 @@ func runAction(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlag
 }
 
 func runChat(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, pos []string) int {
-	chatID, _, err := resolveChat(&g, prof, pos)
+	chatID, _, _, err := resolveChat(&g, prof, pos)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -422,7 +445,7 @@ func runChat(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags,
 }
 
 func runMember(ctx context.Context, c *telegram.Client, pr Printer, g GlobalFlags, prof config.Profile, userID int64) int {
-	chatID, _, err := resolveChat(&g, prof, nil)
+	chatID, _, _, err := resolveChat(&g, prof, nil)
 	if err != nil {
 		PrintErr("%v", err)
 		return ExitUsage
@@ -467,4 +490,3 @@ func trimRightNewline(s string) string {
 	}
 	return s
 }
-

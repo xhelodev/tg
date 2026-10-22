@@ -139,6 +139,7 @@ Flags útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-
 | 3 | config o token ausente/inválido |
 | 4 | API `ok:false` |
 | 5 | red / DNS / timeout |
+| 130 | interrumpido por el usuario (Ctrl-C) |
 
 ## Límites (Bot API cloud)
 

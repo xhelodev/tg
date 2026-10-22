@@ -59,12 +59,16 @@ func TestResolveToken_Malformed(t *testing.T) {
 	}
 }
 
-func TestTokenNotLeaked(t *testing.T) {
-	out := "dry-run GET https://api.telegram.org/bot123456789:***/getMe"
-	if !EnsureTokenNotLeaked(out, testToken) {
-		t.Fatal("leak")
+// El invariant "nunca imprimir el token" (AGENTS.md): un valor inválido
+// pasado por el usuario no debe aparecer jamás en los mensajes de error.
+func TestValidateTokenShape_NoLeak(t *testing.T) {
+	secret := "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+	bad := "12:" + secret // malformado (pocas cifras) pero con "secreto"
+	err := validateTokenShape(bad)
+	if err == nil {
+		t.Fatal("esperado error de token malformado")
 	}
-	if EnsureTokenNotLeaked("secret "+testToken, testToken) {
-		t.Fatal("debió detectar leak")
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), bad) {
+		t.Fatalf("el error filtra el valor del token: %v", err)
 	}
 }

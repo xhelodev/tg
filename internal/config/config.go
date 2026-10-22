@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -22,6 +23,10 @@ type Profile struct {
 	Aliases     map[string]string `json:"aliases,omitempty"`
 }
 
+// WarnOnPermissions controla el aviso de permisos del config (Lo desactiva
+// el CLI con --quiet/--json para no ensuciar pipelines).
+var WarnOnPermissions = true
+
 // Load lee la configuración desde la ruta XDG estándar o path explícito.
 func Load(path string) (*Config, string, error) {
 	if path == "" {
@@ -35,9 +40,11 @@ func Load(path string) (*Config, string, error) {
 		return nil, path, err
 	}
 	// Aviso de permisos 0600
-	if fi, err := os.Stat(path); err == nil {
-		if fi.Mode().Perm()&0o077 != 0 {
-			fmt.Fprintf(os.Stderr, "aviso: %s tiene permisos %o; se recomienda 0600\n", path, fi.Mode().Perm())
+	if WarnOnPermissions {
+		if fi, err := os.Stat(path); err == nil {
+			if fi.Mode().Perm()&0o077 != 0 {
+				fmt.Fprintf(os.Stderr, "aviso: %s tiene permisos %o; se recomienda 0600\n", path, fi.Mode().Perm())
+			}
 		}
 	}
 	var cfg Config
@@ -99,16 +106,14 @@ func (p Profile) ResolveAlias(name string) (chatID string, threadID int, ok bool
 	return chatID, threadID, true
 }
 
-// SplitChatThread parsea "chat" o "chat:thread".
+// SplitChatThread parsea "chat" o "chat:thread" con Atoi estricta: el thread
+// debe ser un entero canónico positivo ("42" sí, "+5" y "007" no), de modo
+// que "@canal", IDs negativos ("-100123…") y tokens con ":" no se confundan.
 func SplitChatThread(s string) (chatID string, threadID int) {
 	s = strings.TrimSpace(s)
 	if i := strings.LastIndex(s, ":"); i > 0 {
-		// Evitar confundir con @channel o IDs negativos: thread es numérico al final
 		right := s[i+1:]
-		var n int
-		if _, err := fmt.Sscanf(right, "%d", &n); err == nil && right == fmt.Sprintf("%d", n) {
-			// Para IDs negativos tipo -100:42 el ":" separa thread.
-			// Pero tokens tienen ":" — aquí solo chat destinations.
+		if n, err := strconv.Atoi(right); err == nil && n > 0 && strconv.Itoa(n) == right {
 			left := s[:i]
 			// Si left parece chat (@x, -100..., dígitos) úsalo
 			if left != "" && !strings.Contains(left, "/") {
@@ -119,7 +124,21 @@ func SplitChatThread(s string) (chatID string, threadID int) {
 	return s, 0
 }
 
+// HasAlias informa si name existe como alias del perfil (con o sin @).
+func (p Profile) HasAlias(name string) bool {
+	if p.Aliases == nil {
+		return false
+	}
+	if _, ok := p.Aliases[name]; ok {
+		return true
+	}
+	_, ok := p.Aliases[strings.TrimPrefix(name, "@")]
+	return ok
+}
+
 // Save escribe la configuración con permisos 0600 (crea el directorio si hace falta).
+// El archivo temporal se crea con os.CreateTemp en el mismo directorio: no
+// sigue symlinks preexistentes tipo config.json.tmp y el rename es atómico.
 func Save(path string, cfg *Config) error {
 	if path == "" {
 		path = DefaultPath()
@@ -133,17 +152,27 @@ func Save(path string, cfg *Config) error {
 		return fmt.Errorf("serializando config: %w", err)
 	}
 	data = append(data, '\n')
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dir, ".tg-config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creando config temporal: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("escribiendo config temporal: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("renombrando config: %w", err)
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("cerrando config temporal: %w", err)
 	}
-	// Asegurar 0600 tras rename (por si umask interfirió)
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("ajustando permisos: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("renombrando config: %w", err)
 	}
 	return nil
 }

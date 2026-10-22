@@ -150,22 +150,26 @@ func (c *Client) redactedURL(method string) string {
 // doJSON envía un body JSON y deserializa el result.
 func (c *Client) doJSON(ctx context.Context, method string, payload any, chatID string, result any) error {
 	var body []byte
-	var err error
 	if payload != nil {
+		var err error
 		body, err = json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("marshal: %w", err)
 		}
 	}
-	return c.do(ctx, method, "application/json", body, chatID, result)
+	return c.do(ctx, method, func() (io.Reader, string, error) {
+		if body == nil {
+			return nil, "application/json", nil
+		}
+		return bytes.NewReader(body), "application/json", nil
+	}, chatID, result)
 }
 
-// doMultipart envía multipart/form-data.
-func (c *Client) doMultipart(ctx context.Context, method string, body []byte, contentType, chatID string, result any) error {
-	return c.do(ctx, method, contentType, body, chatID, result)
-}
-
-func (c *Client) do(ctx context.Context, method, contentType string, body []byte, chatID string, result any) error {
+// do envía la petición con reintentos ante 429. newBody se invoca una vez
+// por intento (permite streaming multipart: cada reintento reconstruye el
+// cuerpo). Si el reader implementa io.ReadCloser se cierra tras cada
+// intento, lo que desbloquea a un productor (pipe) si el servidor abortó.
+func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reader, string, error), chatID string, result any) error {
 	if c.limiter != nil {
 		if err := c.limiter.Wait(ctx, chatID); err != nil {
 			return err
@@ -177,18 +181,19 @@ func (c *Client) do(ctx context.Context, method, contentType string, body []byte
 		maxAttempts = 1
 	}
 
-	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		url := c.methodURL(method)
-		var reader io.Reader
-		if body != nil {
-			reader = bytes.NewReader(body)
+		body, contentType, err := newBody()
+		if err != nil {
+			// Fallo local de E/S (p.ej. f.Seek): no es error del usuario.
+			return fmt.Errorf("construyendo body: %w", err)
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
+
+		url := c.methodURL(method)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err != nil {
 			return &NetworkError{Err: err}
 		}
@@ -214,13 +219,26 @@ func (c *Client) do(ctx context.Context, method, contentType string, body []byte
 
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 		resp.Body.Close()
+		// Cerrar el body de la petición desbloquea al productor (pipe)
+		// si el servidor cerró temprano sin consumir todo.
+		if rc, ok := body.(io.ReadCloser); ok {
+			_ = rc.Close()
+		}
 		if readErr != nil {
 			return &NetworkError{Err: readErr}
 		}
 
 		var envelope apiResponse
 		if err := json.Unmarshal(respBody, &envelope); err != nil {
-			return fmt.Errorf("decode response (HTTP %d): %w", resp.StatusCode, err)
+			// Respuesta no JSON: clasificar por código HTTP, no como bug local.
+			if resp.StatusCode >= 500 {
+				return &NetworkError{Err: fmt.Errorf(
+					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, respBody)}
+			}
+			return &APIError{
+				Code:        resp.StatusCode,
+				Description: fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, respBody),
+			}
 		}
 
 		if envelope.OK {
@@ -255,16 +273,12 @@ func (c *Client) do(ctx context.Context, method, contentType string, body []byte
 			// jitter pequeño
 			jitter := time.Duration(rand.Intn(200)) * time.Millisecond
 			wait += jitter
-			lastErr = apiErr
 			if err := c.retrySleep(ctx, wait); err != nil {
 				return err
 			}
 			continue
 		}
 		return apiErr
-	}
-	if lastErr != nil {
-		return lastErr
 	}
 	return fmt.Errorf("agotados reintentos")
 }

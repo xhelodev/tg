@@ -112,11 +112,3 @@ func validateTokenShape(tok string) error {
 func joinTried(s []string) string {
 	return strings.Join(s, ", ")
 }
-
-// EnsureTokenNotLeaked falla el test/assert si el token aparece en s.
-func EnsureTokenNotLeaked(output, token string) bool {
-	if token == "" {
-		return true
-	}
-	return !strings.Contains(output, token)
-}
