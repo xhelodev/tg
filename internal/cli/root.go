@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +44,6 @@ type GlobalFlags struct {
 	ParseMode   string
 	Split       bool
 	HTMLEscape  bool
-	HTMLEscapeSet bool
 	TextFile    string
 	Caption     string
 	CaptionMode string
@@ -108,9 +109,11 @@ Flags globales:
   --chat/--to, --thread/--topic, --parse-mode, --split
   --html-escape, --text-file, --caption, --caption-mode
 
-Auth (precedencia): --token-file > TG_BOT_TOKEN > TELEGRAM_BOT_TOKEN > config
+Auth (precedencia): --token-file > --token > TG_BOT_TOKEN > TELEGRAM_BOT_TOKEN > config
+Texto: sin --html-escape el texto se envía tal cual (stdin incluido);
+con --parse-mode HTML y texto plano use --html-escape para escapar &<>.
 
-Exit codes: 0 ok | 1 bug | 2 uso | 3 config/token | 4 API | 5 red
+Exit codes: 0 ok | 1 bug | 2 uso | 3 config/token | 4 API | 5 red | 130 interrumpido (Ctrl-C)
 `)
 }
 
@@ -137,7 +140,7 @@ func parseGlobal(fs *flag.FlagSet, g *GlobalFlags) {
 	fs.IntVar(&g.Thread, "topic", 0, "alias de --thread")
 	fs.StringVar(&g.ParseMode, "parse-mode", "HTML", "HTML|MarkdownV2|Markdown")
 	fs.BoolVar(&g.Split, "split", false, "partir textos >4096")
-	fs.BoolVar(&g.HTMLEscape, "html-escape", false, "escapar &<> del texto")
+	fs.BoolVar(&g.HTMLEscape, "html-escape", false, "escapar &<> del texto (nunca se aplica por defecto, ni con stdin)")
 	fs.StringVar(&g.TextFile, "text-file", "", "leer texto desde archivo")
 	fs.StringVar(&g.Caption, "caption", "", "caption para media")
 	fs.StringVar(&g.CaptionMode, "caption-mode", "", "parse_mode del caption")
@@ -188,6 +191,9 @@ func dispatch(ctx context.Context, cmd string, args []string, ver VersionInfo) i
 		return ExitUsage
 	}
 	pos := fs.Args()
+
+	// El aviso de permisos del config es ruido en pipelines silenciosas
+	config.WarnOnPermissions = !(g.Quiet || g.JSON)
 
 	cfg, _, err := config.Load("")
 	if err != nil {
@@ -311,26 +317,33 @@ func mapError(err error) int {
 	if errors.As(err, &ne) {
 		return ExitNetwork
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
+		// Ctrl-C del usuario: no es un fallo de red.
+		return ExitInterrupted
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return ExitNetwork
 	}
 	return ExitBug
 }
 
-func resolveChat(g *GlobalFlags, prof config.Profile, pos []string) (chatID string, threadID int, err error) {
+func resolveChat(g *GlobalFlags, prof config.Profile, pos []string) (chatID string, threadID int, consumed bool, err error) {
 	raw := g.Chat
 	if raw == "" && len(pos) > 0 {
-		// primer posicional puede ser chat si parece id/@/alias
+		// El primer posicional es el chat solo si parece ID/@username o es
+		// un alias conocido; una palabra suelta es texto, no destino (bug:
+		// antes cualquier palabra <64 chars se tragaba como chat).
 		cand := pos[0]
-		if looksLikeChat(cand) {
+		if looksLikeChat(cand) || prof.HasAlias(cand) {
 			raw = cand
+			consumed = true
 		}
 	}
 	if raw == "" && prof.DefaultChat != "" {
 		raw = prof.DefaultChat
 	}
 	if raw == "" {
-		return "", 0, fmt.Errorf("indique --chat / --to o un destino posicional")
+		return "", 0, false, fmt.Errorf("indique --chat / --to o un destino posicional")
 	}
 
 	// Alias
@@ -342,9 +355,12 @@ func resolveChat(g *GlobalFlags, prof config.Profile, pos []string) (chatID stri
 	if g.Thread > 0 {
 		threadID = g.Thread
 	}
-	return chatID, threadID, nil
+	return chatID, threadID, consumed, nil
 }
 
+// looksLikeChat solo acepta formas inequívocas de destino: @username,
+// ID numérico (opcionalmente negativo) e "id:thread". Las palabras sueltas
+// NO son chats: sin alias ni default_chat se devuelve error de uso.
 func looksLikeChat(s string) bool {
 	if s == "" || s == "-" {
 		return false
@@ -352,11 +368,11 @@ func looksLikeChat(s string) bool {
 	if strings.HasPrefix(s, "@") {
 		return true
 	}
-	if s[0] == '-' || (s[0] >= '0' && s[0] <= '9') {
-		return true
+	body := s
+	if i := strings.LastIndex(s, ":"); i > 0 {
+		body = s[:i]
 	}
-	// alias alfanumérico corto sin espacios
-	if !strings.Contains(s, " ") && len(s) < 64 {
+	if _, err := strconv.ParseInt(body, 10, 64); err == nil {
 		return true
 	}
 	return false
@@ -388,15 +404,32 @@ func mediaFromFlags(photo, video, audio, voice, animation, document, sticker str
 	return nil
 }
 
-func classifyMediaRef(ref string) (fileID, url, path string) {
+func classifyMediaRef(ref string) (fileID, url, path string, err error) {
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
-		return "", ref, ""
+		return "", ref, "", nil
 	}
-	if _, err := os.Stat(ref); err == nil {
-		return "", "", ref
+	// Referencias con forma de ruta (./x, /abs, ~/x, cualquier "/") que no
+	// existen: error local claro en vez de enviarlas a Telegram como file_id
+	// y recibir un 400 críptico.
+	pathLike := strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "../") ||
+		strings.HasPrefix(ref, "~") || strings.Contains(ref, "/")
+	if pathLike {
+		p := ref
+		if strings.HasPrefix(p, "~") {
+			if home, e := os.UserHomeDir(); e == nil {
+				p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+			}
+		}
+		if _, e := os.Stat(p); e != nil {
+			return "", "", "", fmt.Errorf("archivo no encontrado: %s", ref)
+		}
+		return "", "", p, nil
+	}
+	if _, e := os.Stat(ref); e == nil {
+		return "", "", ref, nil
 	}
 	// file_id de Telegram
-	return ref, "", ""
+	return ref, "", "", nil
 }
 
 func escapeHTML(s string) string {
@@ -413,7 +446,10 @@ func readText(g *GlobalFlags, pos []string, chatConsumed bool) (text string, fro
 		return string(b), false, nil
 	}
 	args := pos
-	if chatConsumed && len(args) > 0 && looksLikeChat(args[0]) {
+	// Si el chat consumió el primer posicional, el resto es texto.
+	// No se re-verifica con looksLikeChat: resolveChat ya lo decidió
+	// (incluye alias, que no parecen chat a ojos de la heurística).
+	if chatConsumed && len(args) > 0 {
 		args = args[1:]
 	}
 	if len(args) == 0 || (len(args) == 1 && args[0] == "-") {
