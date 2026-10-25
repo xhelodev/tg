@@ -279,8 +279,20 @@ make test
 make vet
 make build
 make cross   # linux/darwin/windows × amd64/arm64
-make smoke   # requiere TG_BOT_TOKEN y TG_TEST_CHAT
+make smoke   # 21 checks contra Telegram real; requiere TG_BOT_TOKEN y TG_TEST_CHAT
 ```
+
+### CI
+
+`.github/workflows/ci.yml` corre en cada PR y push a `main`: tests (Go 1.22 y
+stable, Linux/macOS, `-race`), shellcheck + `install.sh` real, y `make smoke`
+contra la Bot API real. Al final manda **un mensaje a `TG_TEST_CHAT`** con el
+resumen (tests pasados, checks del smoke o cuál falló, link al run): silencioso
+si todo pasó, con sonido si algo falló.
+
+Los secrets `TG_BOT_TOKEN` y `TG_TEST_CHAT` van en **Settings → Environments →
+`telegram`** (no en los del repo). Sin ninguno, smoke y aviso se saltan (p.ej. PRs
+de forks); con solo uno, el job falla para que no pase desapercibido.
 
 Fuera de alcance en v1: webhooks, `getUpdates` daemon (salvo el helper interactivo `tg whoami`), callbacks, pagos, polls, stories, inline mode.
 

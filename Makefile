@@ -51,8 +51,7 @@ smoke:
 	  echo "smoke requiere TG_BOT_TOKEN y TG_TEST_CHAT"; exit 1; \
 	fi
 	$(MAKE) build
-	./bin/$(BIN) me
-	./bin/$(BIN) send --chat "$$TG_TEST_CHAT" "smoke $$(date -Iseconds)"
+	TG=./bin/$(BIN) ./scripts/smoke.sh
 
 clean:
 	rm -rf bin dist
