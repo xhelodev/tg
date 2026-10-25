@@ -35,6 +35,20 @@ type Message struct {
 	Text            string `json:"text,omitempty"`
 	Caption         string `json:"caption,omitempty"`
 	MessageThreadID int    `json:"message_thread_id,omitempty"`
+	// SenderChat: canal/grupo en nombre del cual se envió (admins anónimos, canales).
+	SenderChat    *Chat          `json:"sender_chat,omitempty"`
+	ForwardOrigin *MessageOrigin `json:"forward_origin,omitempty"`
+}
+
+// MessageOrigin describe el origen de un mensaje reenviado.
+type MessageOrigin struct {
+	Type           string `json:"type"` // user, hidden_user, chat, channel
+	Date           int64  `json:"date"`
+	SenderUser     *User  `json:"sender_user,omitempty"`      // user
+	SenderUserName string `json:"sender_user_name,omitempty"` // hidden_user
+	SenderChat     *Chat  `json:"sender_chat,omitempty"`      // chat
+	Chat           *Chat  `json:"chat,omitempty"`             // channel
+	MessageID      int    `json:"message_id,omitempty"`       // channel
 }
 
 // ChatMember describe la membresía de un usuario en un chat.

@@ -87,6 +87,26 @@ usa `--token-file` si prefieres no mostrarlo.
 
 ## Cómo obtener el `chat_id`
 
+**Lo más fácil:** `tg whoami` deja el bot escuchando; escríbele desde donde
+quieras y responde con el `chat_id`, el `thread_id` (tópicos) y el `user_id`
+de quien escribió. Si le **reenvías** un mensaje de otra persona, también
+responde con el id de esa persona (salvo que lo oculte por privacidad).
+
+```bash
+tg whoami                    # escucha hasta Ctrl-C
+tg whoami --once -q          # imprime solo el destino (p.ej. -100123:42) y sale
+tg whoami --no-reply --json  # solo stdout, una línea JSON por mensaje
+```
+
+- En **grupos** con privacy mode (default de BotFather) el bot solo ve comandos
+  y menciones: escribe `/whoami` o `@tu_bot`.
+- Usa `getUpdates`: no funciona si el bot tiene webhook ni si otro proceso
+  (otro bot con el mismo token) está leyendo updates (exit 4, conflicto 409).
+- Los mensajes pendientes de antes de arrancar se descartan sin responder
+  (se listan en stderr).
+
+A mano:
+
 - **DM contigo:** mándale un mensaje al bot, luego:
   ```bash
   curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/getUpdates" | python3 -m json.tool
@@ -143,6 +163,7 @@ tg copy --chat 589215 --from 589215 --message-id 42
 tg action --chat 589215 --action typing
 tg chat --chat @mi_canal
 tg member --chat @mi_canal
+tg whoami
 tg version
 tg update
 ```
