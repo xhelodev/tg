@@ -87,6 +87,14 @@ grep -q '^ok id=' "$OUT" || fail "me: salida inesperada"
 run "me --json" 0 tg me --json
 grep -q '"is_bot":true' "$OUT" || fail "me --json: falta is_bot"
 
+# Common setup mistake: TG_TEST_CHAT set to the bot's own id (the number
+# before ':' in the token). Telegram answers 403 "can't send messages to the
+# bot"; say what to change instead.
+if [[ "${CHAT%%:*}" == "${TG_BOT_TOKEN%%:*}" ]]; then
+  : >"$OUT"
+  fail "TG_TEST_CHAT es el id del propio bot; pon tu chat_id (escríbele al bot y usa: tg whoami --once -q)"
+fi
+
 run "send" 0 tg send --silent --chat "$CHAT" "$stamp"
 id="$(ids_from_out)"; [[ "$id" =~ ^[0-9]+$ ]] || fail "send: sin message_id"; IDS+=("$id")
 
