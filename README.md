@@ -54,6 +54,9 @@ puede tardar unos minutos en verlo; `--ref main` lo fuerza.
 
 `./install.sh --help` y `--dry-run` documentan `--ref`, `--dir` y `TG_INSTALL_DIR`.
 Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar.
+Tras instalar, si el binario no está en `PATH`, añade el `export PATH` al rc de tu
+shell de login (`$SHELL`: bash → `~/.bashrc`, zsh → `~/.zshrc`); es idempotente y
+se puede desactivar con `TG_NO_PATH=1`.
 
 ## Crear el bot (@BotFather)
 
