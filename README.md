@@ -10,7 +10,7 @@ Cliente librería (`pkg/telegram`) + CLI (`cmd/tg`). Cero dependencias externas,
 
 ## Instalación
 
-One-liner (clona, compila e instala; si `$GOPATH/bin` no está en tu `PATH`, añade el `export` a tu rc):
+One-liner (clona en `~/.local/share/tg/src`, compila e instala; si `$GOPATH/bin` no está en tu `PATH`, añade el `export` a tu rc):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash
@@ -99,29 +99,20 @@ tg send --chat -100123 --thread 42 "en el tópico"
 
 Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.txt)).
 
-### Skill para agentes (workflow de este repo)
+### Skills para agentes
 
-[`skills/tg/SKILL.md`](skills/tg/SKILL.md) enseña a un agente cómo trabajar aquí:
-constraints duros, build/test antes de cada PR y el flujo de PR (con el revisor
-automático). Instálala así:
+Hay dos, con propósitos distintos:
 
-**Proyecto** (equipo; se comparte por git):
+| skill | para qué | dónde se instala |
+|-------|----------|------------------|
+| [`skills/tg`](skills/tg/SKILL.md) | **usar** `tg`: que tu agente te avise por Telegram, mande logs/archivos, saque un `chat_id` con `tg whoami`, respete los exit codes y nunca toque el token | global (todos tus proyectos) |
+| [`skills/tg-dev`](skills/tg-dev/SKILL.md) | **programar** en este repo: constraints duros, build/test antes de cada PR, flujo de PR con el revisor automático | solo en este repo |
 
-```bash
-# Claude Code / claude CLI — skill de proyecto
-mkdir -p .claude/skills && cp -r skills/tg .claude/skills/
-
-# Cursor — regla de proyecto (una sola línea de frontmatter extra)
-mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'; cat skills/tg/SKILL.md; } > .cursor/rules/tg.mdc
-
-# OpenCode, Codex CLI y la mayoría de agentes: ya leen AGENTS.md; no hay que instalar nada.
-```
-
-**Personal / global** (todos tus proyectos en esta máquina) — un comando para CLI + skill:
+**`tg` (uso, global)** — un comando instala CLI + skill:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill
-# solo la skill (sin compilar nada):
+# solo la skill (sin compilar nada, no hace falta Go):
 curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill-only
 # o, desde un clone:
 make install-skill
@@ -131,22 +122,22 @@ Detecta los agentes presentes en la máquina e instala donde existan:
 **Claude Code** (`~/.claude/skills/tg/`), **OpenCode** (`~/.config/opencode/skills/tg/`),
 **Hermes** (`~/.hermes/skills/tg/`), **Codex/ChatGPT** (`~/.codex/skills/tg/`);
 si no encuentra ninguno, cae a `~/.claude/skills/tg/`.
-**Cursor** no tiene reglas globales por fichero: se instala project-level como
-`.cursor/rules/tg.mdc` si el directorio actual tiene `.cursor/rules/`.
-Vuelve a ejecutar el comando para actualizar la skill.
+**Cursor** no tiene reglas globales por fichero: si el directorio desde donde lo
+ejecutas tiene `.cursor/rules/`, la instala ahí como `tg.mdc` (se aplica a pedido, no siempre).
+Para actualizarla, vuelve a ejecutar el comando: refresca el clone y la recopia
+(`tg update` actualiza solo el binario).
 
-Instalación manual alternativa:
+A mano: `mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/`
+(o `~/.config/opencode/skills/` para OpenCode).
+
+**`tg-dev` (este repo)** — no hay que instalar nada para Claude Code:
+`.claude/skills/tg-dev` es un symlink versionado a `skills/tg-dev`, así que se
+carga solo al abrir el repo. OpenCode, Codex CLI y la mayoría de agentes ya leen
+[`AGENTS.md`](AGENTS.md). Para Cursor:
 
 ```bash
-# Claude Code
-mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/
-
-# OpenCode
-mkdir -p ~/.config/opencode/skills && cp -r skills/tg ~/.config/opencode/skills/
+mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n'; awk 'NR==1&&/^---$/{f=1;next} f&&/^---$/{f=0;next} !f' skills/tg-dev/SKILL.md; } > .cursor/rules/tg-dev.mdc
 ```
-
-Si ya tienes el repo clonado, un symlink evita duplicar el archivo
-(`ln -s $(pwd)/skills/tg ~/.claude/skills/tg`) y la skill se actualiza con `git pull`.
 
 ### Autenticación (detalle)
 

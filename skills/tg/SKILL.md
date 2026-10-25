@@ -1,74 +1,81 @@
 ---
 name: tg
-description: Working in the xhelodev/tg repo (Go CLI for the Telegram Bot API). Use before writing code, running builds/tests, or opening PRs here.
+description: Send Telegram messages, alerts and files from the shell with the `tg` CLI (Telegram Bot API). Use when the user asks to notify, alert or ping them on Telegram, send a file/photo/log to a chat, post to a group, channel or topic, or find out a chat_id.
 ---
 
-# tg — repo workflow for coding agents
+# tg — Telegram from the shell
 
-Compact workflow guide. For API/reference details read [AGENTS.md](../../AGENTS.md);
-for human-facing docs read [README.md](../../README.md).
+`tg` is a static CLI over the Telegram Bot API. One bot token, numeric chat IDs,
+stable exit codes. Full reference: `tg help` or https://github.com/xhelodev/tg.
 
-## Before writing any code — hard constraints
-
-1. **Zero external dependencies.** `go.mod` is stdlib-only. Never add third-party modules.
-2. **Never print the bot token.** Not to stdout, stderr, logs, or error JSON — in any code path.
-3. **Static builds only.** Every build/install uses `CGO_ENABLED=0`.
-4. **Exit codes are a contract:** `0` ok · `1` bug · `2` usage · `3` config/token · `4` API `ok:false` · `5` network · `130` interrupted.
-5. **Library purity:** `pkg/telegram` never calls `os.Exit` and never prints; only `internal/cli` does I/O and exits.
-6. User-facing messages are written in **Spanish** (existing convention); code identifiers and comments in English.
-
-## Build & test (run before every PR)
+## 1. Check it works
 
 ```bash
-make test          # go test ./...
-make vet           # go vet ./...
-make build         # CGO_ENABLED=0 go build ./cmd/tg
+command -v tg || echo "missing"   # install: curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash
+tg me -q >/dev/null; echo $?      # 0 = token ok · 3 = no token
 ```
 
-All three must pass. New features need table-driven tests next to the code
-(see `internal/cli/*_test.go`, `pkg/telegram/*_test.go` for the style —
-no external assertion libraries). If your change touches `install.sh`,
-smoke-test it with `bash -n` plus a `--dry-run` and a real run against a
-temp `HOME`.
+- **Exit 3 (no token):** ask the user to run `tg login` themselves (it's
+  interactive). **Never** ask them to paste the token into the chat, never pass
+  `--token`, never `cat` `~/.config/tg/config.json` or print `$TG_BOT_TOKEN`.
+- If they already have a token file: `tg me --token-file /path/to/token`.
 
-## PR workflow
+## 2. Know where to send
 
-1. Branch from `main`: `feat/…`, `fix/…`, or `docs/…`.
-2. Conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`), one logical
-   change per PR. Include the *why* in the body, not just the what.
-3. Push and open with `gh pr create --fill-first`.
-4. **An automated reviewer (pr-reviewer bot, Hermes/glm-5.3) comments within
-   ~15 minutes.** Fix everything under "Críticos" and push to the same branch —
-   it re-reviews the new SHA automatically. "Advertencias" are judged case by
-   case; leave a comment if you consciously skip one.
-5. Squash-friendly history: don't pile unrelated fixes into a review branch.
+- If the profile has `default_chat`, `tg send "text"` goes there.
+- Otherwise you need a **numeric chat_id** (`@username` only works for public
+  channels and supergroups; it never works for private users). Don't guess it:
+  ```bash
+  tg whoami --once -q   # then ask the user to message the bot; prints e.g. 589215 or -1001234567890:42
+  ```
+  In groups the user must write `/whoami` or mention the bot. `whoami` fails
+  with exit 4 (409) if the same token is used by a webhook or another running
+  bot: say so instead of retrying.
+- Topics (forum threads): `--chat -100123:42` or `--chat -100123 --thread 42`.
 
-## Never do this
+## 3. Send
 
-- Commit tokens, `.env` files, or anything from `~/.config/tg/`.
-- Force-push `main` or merge without the review bot's verdict.
-- Edit `AGENTS.md`, `README.md`, or `llms.txt` casually — keep them in sync
-  with real behavior; they are load-bearing for other agents.
-- Bump the Bot API version claim without updating the affected methods.
-
-## Adding or changing a command
-
-Keep every surface in sync in the same PR:
-
-1. `internal/cli/root.go`: the `Run`/`dispatch` switch and `printUsage`.
-2. `README.md`: the «Comandos» table (plus a section if it needs explaining).
-3. `AGENTS.md`: the «Comandos» block (and exit codes / scope notes if they change).
-4. Tests with `httptest` (fake Bot API) — never a real token. Check the token
-   never shows up in stdout/stderr (see `TestRun_Me_DryRun_NoTokenLeak`).
-
-Flags go after the command (`tg me --json`); there are no flags before it.
-
-## Quick layout
-
+```bash
+tg send --chat 589215 "build OK ✅"
+tg send --chat 589215 --html-escape "$(tail -n 20 build.log)"   # arbitrary text: escape it
+some_cmd 2>&1 | tg send --chat 589215 --html-escape --split -   # stdin; --split for >4096 chars
+tg send --chat 589215 --document ./report.pdf --caption "informe"
+tg send --chat 589215 --photo ./chart.png
+tg send --chat 589215 --silent "no notification sound"
 ```
-cmd/tg/          # thin main -> cli.Run
-pkg/telegram/    # typed client (pure library)
-internal/cli/    # flags, commands, token resolve, output, exit codes
-internal/config/ # ~/.config/tg/config.json (XDG)
-install.sh       # readable installer: clone/pull -> go build -> PATH
+
+- **Default parse mode is HTML and text is NOT escaped.** Any `<`, `>` or `&`
+  in logs/command output breaks the send (exit 4, "can't parse entities").
+  Use `--html-escape` for untrusted text, or `--parse-mode ""` for plain text.
+  Only send raw HTML (`<b>`, `<code>`, `<pre>`) you wrote yourself.
+- Limits: text 4096 chars (use `--split`), caption 1024, upload 50 MB
+  (photos 10 MB).
+- `-q` prints only the `message_id`; `--json` prints the API result.
+- Flags go **after** the command: `tg send --json …`, not `tg --json send …`.
+- Preview without sending: `--dry-run` (the token is redacted).
+
+## 4. Follow up on a message
+
+```bash
+id=$(tg send -q --chat 589215 "deploy: en curso…")
+tg edit --chat 589215 --message-id "$id" "deploy: listo ✅"
+tg react --chat 589215 --message-id "$id" --emoji "👍"
+tg delete --chat 589215 --message-id "$id"
 ```
+
+## 5. Exit codes (branch on these, not on stderr text)
+
+| code | meaning | what to do |
+|------|---------|------------|
+| 0 | ok | — |
+| 2 | bad flags/args | fix the command |
+| 3 | no/invalid token | ask the user to run `tg login` |
+| 4 | Telegram said no (`ok:false`) | read stderr: chat not found, bot not in chat, parse error… |
+| 5 | network/timeout | retry later; 429 rate limits are already retried |
+| 130 | Ctrl-C | stop |
+
+## Don'ts
+
+- Don't spam: one message per event; batch or `--split` long output.
+- Don't loop `tg whoami` in the background or leave it running unattended.
+- Don't send secrets (tokens, `.env`, keys) to Telegram, even to the user's own DM.

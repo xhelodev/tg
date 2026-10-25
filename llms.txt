@@ -2,7 +2,8 @@
 
 - AGENTS.md — primary guide for AI coding agents (constraints, layout, commands, build)
 - README.md — human-oriented docs (install, BotFather, examples, pitfalls)
-- skills/tg/SKILL.md — repo workflow skill (constraints, build/test, PR flow)
+- skills/tg/SKILL.md — usage skill: sending Telegram alerts/files with the tg CLI, chat_id via `tg whoami`, exit codes
+- skills/tg-dev/SKILL.md — repo workflow skill (constraints, build/test, PR flow)
 - LICENSE — MIT (Copyright 2026 Marcelo Aguirre / xhelodev)
 
 Repo: https://github.com/xhelodev/tg

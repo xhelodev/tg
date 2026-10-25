@@ -1,7 +1,7 @@
 # AGENTS.md — guía para agentes de código
 
 Docs humanas: [README.md](README.md). Este archivo es la referencia compacta para LLMs/agentes.
-Workflow de PR (build/test, revisor automático): [skills/tg/SKILL.md](skills/tg/SKILL.md).
+Workflow de PR (build/test, revisor automático): [skills/tg-dev/SKILL.md](skills/tg-dev/SKILL.md). Skill para *usar* el CLI: [skills/tg/SKILL.md](skills/tg/SKILL.md).
 
 ## Qué es
 
