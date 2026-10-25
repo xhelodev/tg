@@ -31,7 +31,7 @@ install-user:
 	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o "$(PREFIX)/$(BIN)" ./cmd/tg
 	@echo "→ $(PREFIX)/$(BIN)"
 
-# Instala solo la skill de agente (skills/tg/SKILL.md) en los agentes detectados
+# Instala solo la skill de uso (skills/tg/SKILL.md) en los agentes detectados
 install-skill:
 	./install.sh --skill-only
 

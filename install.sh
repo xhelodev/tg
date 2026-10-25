@@ -3,8 +3,9 @@
 # install.sh — installer for the tg CLI (https://github.com/xhelodev/tg)
 #
 # What it does (nothing else):
-#   1. Downloads the source code from GitHub (or reuses a local clone,
-#      updating it with a fast-forward pull).
+#   1. Downloads the source code from GitHub into one fixed directory
+#      (default ~/.local/share/tg/src), or reuses that clone / the repo you
+#      run it from, updating it with a fast-forward pull.
 #   2. Compiles it with the Go toolchain already on your machine.
 #   3. Places the single static binary `tg` in your Go bin directory
 #      (or TG_INSTALL_DIR / PREFIX if you set one).
@@ -12,11 +13,12 @@
 #      line to your shell's rc file (~/.bashrc or ~/.zshrc), only once.
 #
 # What it does NOT do: no telemetry, no background processes, no writing
-# outside $PREFIX, the repo clone and your shell rc file. Every network
+# outside $PREFIX, the repo clone, your shell rc file and (with --skill)
+# the agents' skill directories. Every network
 # access goes to github.com over HTTPS. Read it before running it — that
 # is the point of shipping a script instead of a curl|bash blob.
 #
-# Requirements: git and Go >= 1.22 in PATH.
+# Requirements: git and Go >= 1.22 in PATH (only git for --skill-only).
 # ============================================================================
 set -euo pipefail
 
@@ -25,6 +27,12 @@ set -euo pipefail
 INVOCATION_DIR="$PWD"
 
 REPO_URL="https://github.com/xhelodev/tg.git"
+# Fixed clone location, so curl|bash doesn't leave a ./tg wherever it runs.
+# A relative XDG_DATA_HOME is invalid per the XDG spec: ignore it.
+: "${HOME:?se necesita HOME definido}"
+DATA_HOME="${XDG_DATA_HOME:-}"
+[[ "$DATA_HOME" == /* ]] || DATA_HOME="$HOME/.local/share"
+DEFAULT_SRC_DIR="$DATA_HOME/tg/src"
 
 usage() {
   cat <<'USAGE'
@@ -36,9 +44,11 @@ Installs the tg CLI (CGO_ENABLED=0) into PREFIX or TG_INSTALL_DIR
 Options:
   -h, --help     Show this help
   --dry-run      Print actions without installing
-  --skill        Also install the agent skill (SKILL.md) for detected agents
+  --skill        Also install the `tg` agent skill for detected agents
   --skill-only   Install only the agent skill (no build, no PATH changes)
-  --dir DIR      Working clone directory (default: ./tg or current repo)
+  --dir DIR      Clone directory (default: current repo, else
+                 ${XDG_DATA_HOME:-~/.local/share}/tg/src — keep in sync
+                 with DEFAULT_SRC_DIR)
   --ref REF      git ref to checkout (default: HEAD / default branch)
 
 Environment:
@@ -67,8 +77,12 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift ;;
     --skill) WANT_SKILL=1; shift ;;
     --skill-only) WANT_SKILL=1; SKILL_ONLY=1; shift ;;
-    --dir) CLONE_DIR="${2:-}"; shift 2 ;;
-    --ref) REF="${2:-}"; shift 2 ;;
+    --dir|--ref)
+      if [[ $# -lt 2 || -z "$2" || "$2" == -* ]]; then
+        echo "error: $1 requiere un valor" >&2; usage >&2; exit 2
+      fi
+      if [[ "$1" == --dir ]]; then CLONE_DIR="$2"; else REF="$2"; fi
+      shift 2 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -89,6 +103,13 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "se necesita '$1' en PATH"
 }
 
+# Private scratch file for git's stderr (shown only on failure), removed on exit.
+ERR_LOG="$(mktemp "${TMPDIR:-/tmp}/tg-install.XXXXXX")"
+trap 'rm -f "$ERR_LOG"' EXIT
+# Ctrl-C / kill during a slow clone: exit through the EXIT trap too.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # --- Check build dependencies (git + Go) ------------------------------------
 # --skill-only doesn't build anything: git is enough there.
 need_cmd git
@@ -100,12 +121,15 @@ fi
 
 # --- Decide where the binary goes -------------------------------------------
 # Priority: TG_INSTALL_DIR > PREFIX > $(go env GOPATH)/bin (Go's default).
-PREFIX="${TG_INSTALL_DIR:-${PREFIX:-}}"
-if [[ -z "$PREFIX" ]]; then
-  PREFIX="$(go env GOPATH)/bin"
+# Skipped for --skill-only, which must work without Go.
+if [[ "$SKILL_ONLY" -eq 0 ]]; then
+  PREFIX="${TG_INSTALL_DIR:-${PREFIX:-}}"
+  if [[ -z "$PREFIX" ]]; then
+    PREFIX="$(go env GOPATH)/bin"
+  fi
+  mkdir -p "$PREFIX" 2>/dev/null || true
+  echo "→ PREFIX=$PREFIX"
 fi
-mkdir -p "$PREFIX" 2>/dev/null || true
-echo "→ PREFIX=$PREFIX"
 
 # --- Locate the source code --------------------------------------------------
 # Reuse an existing checkout when we can, so a second run never re-downloads.
@@ -120,12 +144,12 @@ resolve_repo_dir() {
     pwd
     return
   fi
-  # User-provided --dir, else ./tg next to where the script runs.
+  # User-provided --dir, else the fixed per-user location.
   if [[ -n "$CLONE_DIR" ]]; then
     echo "$CLONE_DIR"
     return
   fi
-  echo "./tg"
+  echo "$DEFAULT_SRC_DIR"
 }
 
 REPO_DIR="$(resolve_repo_dir)"
@@ -136,7 +160,7 @@ ensure_clone() {
     echo "→ usando repo existente: $REPO_DIR"
     if [[ "$DRY_RUN" -eq 1 ]]; then
       echo "+ git -C $REPO_DIR fetch origin && git -C $REPO_DIR merge --ff-only <rama>"
-    elif [[ -d "$REPO_DIR/.git" ]] && git -C "$REPO_DIR" fetch origin --prune 2>/tmp/tg-install-pull.err; then
+    elif [[ -d "$REPO_DIR/.git" ]] && git -C "$REPO_DIR" fetch origin --prune 2>"$ERR_LOG"; then
       echo "→ actualizando clone desde origin"
       local branch
       branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
@@ -144,19 +168,22 @@ ensure_clone() {
         # HEAD detached: advance to origin/HEAD (fetch marks it not-for-merge,
         # so FETCH_HEAD is useless here).
         if git -C "$REPO_DIR" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then
-          git -C "$REPO_DIR" merge --ff-only origin/HEAD 2>>/tmp/tg-install-pull.err \
+          git -C "$REPO_DIR" merge --ff-only origin/HEAD 2>>"$ERR_LOG" \
             || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
         else
-          git -C "$REPO_DIR" checkout -q --detach origin/main 2>>/tmp/tg-install-pull.err \
+          git -C "$REPO_DIR" checkout -q --detach origin/main 2>>"$ERR_LOG" \
             || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
         fi
-      elif ! git -C "$REPO_DIR" merge --ff-only "origin/$branch" 2>>/tmp/tg-install-pull.err; then
+      elif ! git -C "$REPO_DIR" merge --ff-only "origin/$branch" 2>>"$ERR_LOG"; then
         # Diverged local branch: warn, but still build what is on disk.
         echo "aviso: no se pudo actualizar '$branch' (¿rama local divergida?); se compila el estado actual" >&2
-        [[ -f /tmp/tg-install-pull.err ]] && cat /tmp/tg-install-pull.err >&2
+        cat "$ERR_LOG" >&2
       fi
+    elif [[ ! -d "$REPO_DIR/.git" ]]; then
+      echo "aviso: $REPO_DIR no es un clone git; se compila tal cual (bórralo para re-clonar)" >&2
     elif [[ "$DRY_RUN" -eq 0 ]]; then
       echo "aviso: no se pudo contactar origin (¿sin red?); se compila el estado actual" >&2
+      cat "$ERR_LOG" >&2
     fi
     return
   fi
@@ -165,14 +192,15 @@ ensure_clone() {
     echo "+ git clone $REPO_URL $REPO_DIR"
     return
   fi
-  if ! git clone "$REPO_URL" "$REPO_DIR" 2>/tmp/tg-install-clone.err; then
+  mkdir -p "$(dirname "$REPO_DIR")"
+  if ! git clone "$REPO_URL" "$REPO_DIR" 2>"$ERR_LOG"; then
     cat >&2 <<EOF
 error: no se pudo clonar $REPO_URL
 
 Comprueba conexión a GitHub o clona manualmente:
   git clone $REPO_URL && cd tg && ./install.sh
 EOF
-    [[ -f /tmp/tg-install-clone.err ]] && cat /tmp/tg-install-clone.err >&2
+    cat "$ERR_LOG" >&2
     exit 1
   fi
 }
@@ -195,6 +223,8 @@ else
 fi
 
 # --- Install the agent skill (skills/tg/SKILL.md) ----------------------------
+# skills/tg is the *usage* skill (send alerts with tg from any project); the
+# repo-workflow skill (skills/tg-dev) is project-level only, see README.
 # Copies the repo's SKILL.md into the skills/rules directory of every coding
 # agent detected on this machine. Detection = the agent's config dir exists:
 #   Claude Code  -> ~/.claude/skills/tg/
@@ -203,7 +233,8 @@ fi
 #   Codex/ChatGPT-> ~/.codex/skills/tg/
 # If none is found, falls back to ~/.claude/skills/tg. Cursor has no global
 # rules dir, so it is only installed project-level when ./.cursor/rules exists.
-# Copying (not symlinking) keeps each agent self-contained; re-run to update.
+# Copying (not symlinking) keeps each agent self-contained; re-run to update
+# (the clone is refreshed first, so a re-run always installs the latest).
 install_skill() {
   local src="$REPO_DIR/skills/tg/SKILL.md"
   if [[ ! -f "$src" ]]; then
@@ -235,10 +266,16 @@ install_skill() {
     local mdc="$INVOCATION_DIR/.cursor/rules/tg.mdc"
     if [[ "$DRY_RUN" -eq 1 ]]; then
       echo "+ (frontmatter + skill) > $mdc"
+    elif ! command -v awk >/dev/null 2>&1; then
+      # Without awk we can't strip the skill's frontmatter; a .mdc with two
+      # frontmatter blocks would be malformed, so skip it.
+      echo "aviso: sin awk no se instala la regla de Cursor ($mdc)" >&2
     else
       {
-        printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'
-        cat "$src"
+        # Cursor reads its own frontmatter: drop the skill's, keep the body
+        # (tolerates CRLF and trailing spaces on the --- lines).
+        printf -- '---\ndescription: Send Telegram messages, alerts and files with the tg CLI; find a chat_id\nglobs:\nalwaysApply: false\n---\n'
+        awk '{ l = $0; sub(/[ \t\r]+$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
       } > "$mdc"
       echo "→ skill instalada como regla de Cursor en $mdc"
     fi
@@ -248,7 +285,7 @@ install_skill() {
 # --- Build the static binary and drop it into $PREFIX ------------------------
 if [[ "$SKILL_ONLY" -eq 1 ]]; then
   echo "→ --skill-only: saltando build y PATH; instalando solo la skill"
-  install_skill
+  install_skill || exit 1
   exit 0
 fi
 
@@ -327,7 +364,8 @@ ensure_path() {
 ensure_path
 
 if [[ "$WANT_SKILL" -eq 1 ]]; then
-  install_skill
+  # The binary is already installed: a skill problem is a warning, not a failure.
+  install_skill || echo "aviso: la skill no se instaló; el binario sí" >&2
 fi
 
 echo "Prueba: tg login && tg me"
