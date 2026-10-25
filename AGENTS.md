@@ -75,6 +75,7 @@ tg action --chat ID --action typing
 tg chat --chat @canal
 tg member --chat @canal
 tg version
+tg update [--ref vX.Y.Z|main] [--dry-run] # go install @latest sobre el binario actual
 ```
 
 Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
@@ -101,6 +102,8 @@ make build   # → bin/tg (CGO_ENABLED=0)
 make install # → $(go env GOPATH)/bin/tg
 make cross   # dist/ multi OS/arch
 ```
+
+Actualizar: `tg update` (requiere Go; exit 3 sin Go, 5 si falla `go install`). `tg version` usa `debug.ReadBuildInfo` si no hubo `-ldflags`.
 
 Instalación: `go install github.com/xhelodev/tg/cmd/tg@latest` (ver README § «Instalación rápida»); alternativa `./install.sh` o `make install` desde un clone.
 

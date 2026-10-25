@@ -70,6 +70,8 @@ func Run(args []string, ver VersionInfo) int {
 		return cmdVersion(rest, ver)
 	case "login":
 		return cmdLogin(ctx, rest)
+	case "update":
+		return cmdUpdate(ctx, rest, ver)
 	case "me", "send", "edit", "edit-caption", "delete", "pin", "unpin",
 		"react", "forward", "copy", "action", "chat", "member":
 		return dispatch(ctx, cmd, rest, ver)
@@ -101,6 +103,7 @@ Comandos:
   chat            getChat
   member          getChatMember
   version         versión del binario y Bot API objetivo
+  update          reinstala la última versión (go install; --ref v1.2.3|main)
 
 Flags globales:
   --token-file, --token, --profile, --api-base, --timeout
@@ -285,14 +288,8 @@ func cmdVersion(args []string, ver VersionInfo) int {
 	var jsonOut bool
 	fs.BoolVar(&jsonOut, "json", false, "")
 	_ = fs.Parse(args)
-	v := ver.Version
-	if v == "" {
-		v = "dev"
-	}
-	c := ver.Commit
-	if c == "" {
-		c = "unknown"
-	}
+	rv := resolveVersion(ver)
+	v, c := rv.Version, rv.Commit
 	if jsonOut {
 		fmt.Printf(`{"version":%q,"commit":%q,"bot_api":%q}`+"\n", v, c, telegram.BotAPIVersion)
 		return ExitOK

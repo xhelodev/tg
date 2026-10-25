@@ -38,6 +38,20 @@ make install                              # → $(go env GOPATH)/bin/tg
 make install-user PREFIX=$HOME/.local/bin # o TG_INSTALL_DIR=...
 ```
 
+### Actualizar
+
+```bash
+tg update                 # go install …/cmd/tg@latest en el mismo directorio del binario
+tg update --ref v0.2.0    # versión concreta (o --ref main para lo último de main)
+tg update --dry-run       # muestra el comando sin ejecutarlo
+```
+
+Requiere Go en `PATH`. Reemplaza el binario en ejecución (fija `GOBIN` a su
+directorio), así que también sirve si lo instalaste con `TG_INSTALL_DIR`.
+Exit `3` si no hay Go, `5` si `go install` falla (red/proxy).
+Sin tags publicados, `@latest` es el último commit de `main` y el module proxy
+puede tardar unos minutos en verlo; `--ref main` lo fuerza.
+
 `./install.sh --help` y `--dry-run` documentan `--ref`, `--dir` y `TG_INSTALL_DIR`.
 Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar.
 
@@ -124,6 +138,7 @@ tg action --chat 589215 --action typing
 tg chat --chat @mi_canal
 tg member --chat @mi_canal
 tg version
+tg update
 ```
 
 Flags útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
