@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -147,6 +149,47 @@ func (c *Client) redactedURL(method string) string {
 	return fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.TokenRedacted(), method)
 }
 
+// redact reemplaza el token por su forma redactada en s, también URL-encoded
+// (":" → "%3A"/"%3a"), por si un proxy lo devuelve escapado.
+func (c *Client) redact(s string) string {
+	if c.token == "" {
+		return s
+	}
+	red := c.TokenRedacted()
+	s = strings.ReplaceAll(s, c.token, red)
+	s = strings.ReplaceAll(s, strings.Replace(c.token, ":", "%3A", 1), red)
+	return strings.ReplaceAll(s, strings.Replace(c.token, ":", "%3a", 1), red)
+}
+
+// netErr envuelve err como NetworkError sin el token: los errores de
+// net/http (*url.Error) incluyen la URL completa, y esa URL lleva el token
+// ("…/bot<TOKEN>/getMe"). El *url.Error se corrige en sitio (es de esta
+// petición y de nadie más), así la cadena sigue limpia y errors.Is/As
+// funcionan. redactedError es la última red para cualquier otro mensaje.
+func (c *Client) netErr(err error) *NetworkError {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = c.redact(ue.URL)
+	}
+	if msg := err.Error(); c.redact(msg) != msg {
+		err = &redactedError{msg: c.redact(msg), err: err}
+	}
+	return &NetworkError{Err: err}
+}
+
+// redactedError sustituye el mensaje de un error que contenía el token.
+// Ojo: Unwrap devuelve el error original, que SÍ contiene el token; existe
+// para conservar errors.Is/As. Quien recorra la cadena e imprima cada
+// eslabón debe usar solo el mensaje de este envoltorio. Los casos conocidos
+// (*url.Error, cuerpos no JSON) se redactan antes y no llegan aquí.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
 // doJSON envía un body JSON y deserializa el result.
 func (c *Client) doJSON(ctx context.Context, method string, payload any, chatID string, result any) error {
 	var body []byte
@@ -192,10 +235,10 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 			return fmt.Errorf("construyendo body: %w", err)
 		}
 
-		url := c.methodURL(method)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+		endpoint := c.methodURL(method)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 		if err != nil {
-			return &NetworkError{Err: err}
+			return c.netErr(err)
 		}
 		if contentType != "" && body != nil {
 			req.Header.Set("Content-Type", contentType)
@@ -214,7 +257,7 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		if err != nil {
 			// Fallo de conexión previo al envío completo: reintentable en getMe etc.
 			// Para send, solo reintentamos 429 (manejado abajo); aquí devolvemos red.
-			return &NetworkError{Err: err}
+			return c.netErr(err)
 		}
 
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
@@ -225,19 +268,22 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 			_ = rc.Close()
 		}
 		if readErr != nil {
-			return &NetworkError{Err: readErr}
+			return c.netErr(readErr)
 		}
 
 		var envelope apiResponse
 		if err := json.Unmarshal(respBody, &envelope); err != nil {
 			// Respuesta no JSON: clasificar por código HTTP, no como bug local.
+			// Un proxy puede repetir la URL (con el token) en su página de
+			// error: redactar antes de truncar, para no dejar un prefijo.
+			snippet := c.redact(string(respBody))
 			if resp.StatusCode >= 500 {
 				return &NetworkError{Err: fmt.Errorf(
-					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, respBody)}
+					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, snippet)}
 			}
 			return &APIError{
 				Code:        resp.StatusCode,
-				Description: fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, respBody),
+				Description: fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, snippet),
 			}
 		}
 
@@ -251,8 +297,9 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		}
 
 		apiErr := &APIError{
-			Code:        envelope.ErrorCode,
-			Description: envelope.Description,
+			Code: envelope.ErrorCode,
+			// Un intermediario podría devolver JSON válido con la URL dentro.
+			Description: c.redact(envelope.Description),
 		}
 		if envelope.Parameters != nil {
 			apiErr.RetryAfter = envelope.Parameters.RetryAfter

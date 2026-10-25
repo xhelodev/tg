@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -297,5 +298,93 @@ func TestDeletePinReact(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("falta %s en %s", want, joined)
 		}
+	}
+}
+
+// Los errores de red de net/http incluyen la URL, que lleva el token: nunca
+// deben llegar al usuario sin redactar (ni romper errors.Is/As).
+func TestNetworkErrorNoTokenLeak(t *testing.T) {
+	// Servidor que corta la conexión sin responder.
+	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("sin Hijacker")
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
+		conn.Close()
+	}))
+	defer cut.Close()
+	// Proxy que devuelve la URL pedida en una página de error no JSON. El
+	// relleno deja el token cruzando el corte de 200 bytes del mensaje.
+	// getMe → 502 con la URL tal cual; getChat → 404 con la URL escapada;
+	// sendChatAction → JSON válido ok:false con la URL en description.
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pad := strings.Repeat("x", 150)
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getChat"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "<html>"+pad+" error en "+url.QueryEscape(r.URL.Path)+"</html>")
+		case strings.HasSuffix(r.URL.Path, "/sendChatAction"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "error_code": 502, "description": "upstream " + r.URL.Path,
+			})
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "<html>"+pad+" error en "+r.URL.Path+"</html>")
+		}
+	}))
+	defer echo.Close()
+
+	cases := []struct {
+		name string
+		base string
+		call func(c *Client) error
+	}{
+		{"conexión rechazada", "http://127.0.0.1:1", func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"conexión cortada", cut.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"proxy 502 con la URL", echo.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"proxy 404 con la URL escapada", echo.URL, func(c *Client) error { _, err := c.GetChat(context.Background(), "1"); return err }},
+		{"proxy JSON con la URL en description", echo.URL, func(c *Client) error {
+			return c.SendChatAction(context.Background(), SendChatActionRequest{ChatID: "1", Action: "typing"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := New(validToken, WithBaseURL(tc.base), WithLimiter(nil), WithNoRetry())
+			err := tc.call(c)
+			if err == nil {
+				t.Fatal("esperado error")
+			}
+			i := strings.IndexByte(validToken, ':')
+			if i < 0 || len(validToken)-i-1 < 8 {
+				t.Fatalf("fixture validToken inválido para este test")
+			}
+			secret := validToken[i+1:]
+			// Ni el token ni un prefijo suyo (corte por truncado), en ningún
+			// eslabón de la cadena.
+			for e := err; e != nil; e = errors.Unwrap(e) {
+				if strings.Contains(e.Error(), secret[:8]) {
+					t.Fatalf("token filtrado en %T: %v", e, e)
+				}
+			}
+			var ue *url.Error
+			if errors.As(err, &ue) && !strings.Contains(ue.URL, RedactToken(validToken)) {
+				t.Fatalf("*url.Error.URL sin redactar: %q", ue.URL)
+			}
+		})
+	}
+
+	// La cadena de errores sigue intacta: la cancelación se distingue.
+	c, _ := New(validToken, WithBaseURL(cut.URL), WithLimiter(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.GetMe(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(context.Canceled) perdido: %v", err)
 	}
 }
