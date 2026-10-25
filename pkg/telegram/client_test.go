@@ -321,14 +321,22 @@ func TestNetworkErrorNoTokenLeak(t *testing.T) {
 	defer cut.Close()
 	// Proxy que devuelve la URL pedida en una página de error no JSON. El
 	// relleno deja el token cruzando el corte de 200 bytes del mensaje.
+	// getMe → 502 con la URL tal cual; getChat → 404 con la URL escapada;
+	// sendChatAction → JSON válido ok:false con la URL en description.
 	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code := http.StatusBadGateway
-		if strings.HasSuffix(r.URL.Path, "/getChat") {
-			code = http.StatusNotFound
-		}
-		w.WriteHeader(code)
 		pad := strings.Repeat("x", 150)
-		_, _ = io.WriteString(w, "<html>"+pad+" error en "+r.URL.Path+"</html>")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getChat"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, "<html>"+pad+" error en "+url.QueryEscape(r.URL.Path)+"</html>")
+		case strings.HasSuffix(r.URL.Path, "/sendChatAction"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "error_code": 502, "description": "upstream " + r.URL.Path,
+			})
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "<html>"+pad+" error en "+r.URL.Path+"</html>")
+		}
 	}))
 	defer echo.Close()
 
@@ -340,7 +348,10 @@ func TestNetworkErrorNoTokenLeak(t *testing.T) {
 		{"conexión rechazada", "http://127.0.0.1:1", func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
 		{"conexión cortada", cut.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
 		{"proxy 502 con la URL", echo.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
-		{"proxy 404 con la URL", echo.URL, func(c *Client) error { _, err := c.GetChat(context.Background(), "1"); return err }},
+		{"proxy 404 con la URL escapada", echo.URL, func(c *Client) error { _, err := c.GetChat(context.Background(), "1"); return err }},
+		{"proxy JSON con la URL en description", echo.URL, func(c *Client) error {
+			return c.SendChatAction(context.Background(), SendChatActionRequest{ChatID: "1", Action: "typing"})
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,7 +360,11 @@ func TestNetworkErrorNoTokenLeak(t *testing.T) {
 			if err == nil {
 				t.Fatal("esperado error")
 			}
-			secret := validToken[strings.IndexByte(validToken, ':')+1:]
+			i := strings.IndexByte(validToken, ':')
+			if i < 0 || len(validToken)-i-1 < 8 {
+				t.Fatalf("fixture validToken inválido para este test")
+			}
+			secret := validToken[i+1:]
 			// Ni el token ni un prefijo suyo (corte por truncado), en ningún
 			// eslabón de la cadena.
 			for e := err; e != nil; e = errors.Unwrap(e) {

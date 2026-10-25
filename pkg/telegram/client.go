@@ -149,12 +149,16 @@ func (c *Client) redactedURL(method string) string {
 	return fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.TokenRedacted(), method)
 }
 
-// redact reemplaza el token por su forma redactada en s.
+// redact reemplaza el token por su forma redactada en s, también URL-encoded
+// (":" → "%3A"/"%3a"), por si un proxy lo devuelve escapado.
 func (c *Client) redact(s string) string {
 	if c.token == "" {
 		return s
 	}
-	return strings.ReplaceAll(s, c.token, c.TokenRedacted())
+	red := c.TokenRedacted()
+	s = strings.ReplaceAll(s, c.token, red)
+	s = strings.ReplaceAll(s, strings.Replace(c.token, ":", "%3A", 1), red)
+	return strings.ReplaceAll(s, strings.Replace(c.token, ":", "%3a", 1), red)
 }
 
 // netErr envuelve err como NetworkError sin el token: los errores de
@@ -167,13 +171,17 @@ func (c *Client) netErr(err error) *NetworkError {
 	if errors.As(err, &ue) {
 		ue.URL = c.redact(ue.URL)
 	}
-	if c.token != "" && strings.Contains(err.Error(), c.token) {
-		err = &redactedError{msg: c.redact(err.Error()), err: err}
+	if msg := err.Error(); c.redact(msg) != msg {
+		err = &redactedError{msg: c.redact(msg), err: err}
 	}
 	return &NetworkError{Err: err}
 }
 
 // redactedError sustituye el mensaje de un error que contenía el token.
+// Ojo: Unwrap devuelve el error original, que SÍ contiene el token; existe
+// para conservar errors.Is/As. Quien recorra la cadena e imprima cada
+// eslabón debe usar solo el mensaje de este envoltorio. Los casos conocidos
+// (*url.Error, cuerpos no JSON) se redactan antes y no llegan aquí.
 type redactedError struct {
 	msg string
 	err error
@@ -289,8 +297,9 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		}
 
 		apiErr := &APIError{
-			Code:        envelope.ErrorCode,
-			Description: envelope.Description,
+			Code: envelope.ErrorCode,
+			// Un intermediario podría devolver JSON válido con la URL dentro.
+			Description: c.redact(envelope.Description),
 		}
 		if envelope.Parameters != nil {
 			apiErr.RetryAfter = envelope.Parameters.RetryAfter
