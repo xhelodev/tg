@@ -172,6 +172,8 @@ ensure_clone() {
         echo "aviso: no se pudo actualizar '$branch' (¿rama local divergida?); se compila el estado actual" >&2
         cat "$ERR_LOG" >&2
       fi
+    elif [[ "$DRY_RUN" -eq 0 && ! -d "$REPO_DIR/.git" ]]; then
+      echo "aviso: $REPO_DIR no es un clone git; se compila tal cual (bórralo para re-clonar)" >&2
     elif [[ "$DRY_RUN" -eq 0 ]]; then
       echo "aviso: no se pudo contactar origin (¿sin red?); se compila el estado actual" >&2
       cat "$ERR_LOG" >&2
@@ -255,18 +257,18 @@ install_skill() {
   # against the directory where install.sh was invoked.
   if [[ -d "$INVOCATION_DIR/.cursor/rules" ]]; then
     local mdc="$INVOCATION_DIR/.cursor/rules/tg.mdc"
-    if [[ "$DRY_RUN" -eq 1 ]]; then
+    if ! command -v awk >/dev/null 2>&1; then
+      # Without awk we can't strip the skill's frontmatter; a .mdc with two
+      # frontmatter blocks would be malformed, so skip it.
+      echo "aviso: sin awk no se instala la regla de Cursor ($mdc)" >&2
+    elif [[ "$DRY_RUN" -eq 1 ]]; then
       echo "+ (frontmatter + skill) > $mdc"
     else
       {
         # Cursor reads its own frontmatter: drop the skill's, keep the body
-        # (tolerates CRLF). Without awk, fall back to the whole file.
+        # (tolerates CRLF).
         printf -- '---\ndescription: Send Telegram messages, alerts and files with the tg CLI; find a chat_id\nglobs:\nalwaysApply: false\n---\n'
-        if command -v awk >/dev/null 2>&1; then
-          awk '{ l = $0; sub(/\r$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
-        else
-          cat "$src"
-        fi
+        awk '{ l = $0; sub(/\r$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
       } > "$mdc"
       echo "→ skill instalada como regla de Cursor en $mdc"
     fi

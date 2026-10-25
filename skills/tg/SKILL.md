@@ -68,6 +68,7 @@ tg delete --chat 589215 --message-id "$id"
 | code | meaning | what to do |
 |------|---------|------------|
 | 0 | ok | — |
+| 1 | unexpected bug in tg | report it with the stderr (no token); don't retry blindly |
 | 2 | bad flags/args | fix the command |
 | 3 | no/invalid token | ask the user to run `tg login` |
 | 4 | Telegram said no (`ok:false`) | read stderr: chat not found, bot not in chat, parse error… |
