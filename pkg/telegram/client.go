@@ -149,19 +149,26 @@ func (c *Client) redactedURL(method string) string {
 	return fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.TokenRedacted(), method)
 }
 
+// redact reemplaza el token por su forma redactada en s.
+func (c *Client) redact(s string) string {
+	if c.token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.token, c.TokenRedacted())
+}
+
 // netErr envuelve err como NetworkError sin el token: los errores de
 // net/http (*url.Error) incluyen la URL completa, y esa URL lleva el token
-// ("…/bot<TOKEN>/getMe"). La cadena de errores se conserva (errors.Is/As).
+// ("…/bot<TOKEN>/getMe"). El *url.Error se corrige en sitio (es de esta
+// petición y de nadie más), así la cadena sigue limpia y errors.Is/As
+// funcionan. redactedError es la última red para cualquier otro mensaje.
 func (c *Client) netErr(err error) *NetworkError {
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		ue.URL = strings.ReplaceAll(ue.URL, c.token, c.TokenRedacted())
+		ue.URL = c.redact(ue.URL)
 	}
-	if strings.Contains(err.Error(), c.token) {
-		err = &redactedError{
-			msg: strings.ReplaceAll(err.Error(), c.token, c.TokenRedacted()),
-			err: err,
-		}
+	if c.token != "" && strings.Contains(err.Error(), c.token) {
+		err = &redactedError{msg: c.redact(err.Error()), err: err}
 	}
 	return &NetworkError{Err: err}
 }
@@ -220,8 +227,8 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 			return fmt.Errorf("construyendo body: %w", err)
 		}
 
-		url := c.methodURL(method)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+		endpoint := c.methodURL(method)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 		if err != nil {
 			return c.netErr(err)
 		}
@@ -259,16 +266,16 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		var envelope apiResponse
 		if err := json.Unmarshal(respBody, &envelope); err != nil {
 			// Respuesta no JSON: clasificar por código HTTP, no como bug local.
+			// Un proxy puede repetir la URL (con el token) en su página de
+			// error: redactar antes de truncar, para no dejar un prefijo.
+			snippet := c.redact(string(respBody))
 			if resp.StatusCode >= 500 {
-				// Un proxy puede devolver la URL (con el token) en su página de error.
-				return c.netErr(fmt.Errorf(
-					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, respBody))
+				return &NetworkError{Err: fmt.Errorf(
+					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, snippet)}
 			}
 			return &APIError{
-				Code: resp.StatusCode,
-				Description: strings.ReplaceAll(
-					fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, respBody),
-					c.token, c.TokenRedacted()),
+				Code:        resp.StatusCode,
+				Description: fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, snippet),
 			}
 		}
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -307,20 +308,27 @@ func TestNetworkErrorNoTokenLeak(t *testing.T) {
 	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hj, ok := w.(http.Hijacker)
 		if !ok {
-			t.Fatal("sin Hijacker")
+			t.Error("sin Hijacker")
+			return
 		}
-		conn, _, _ := hj.Hijack()
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("hijack: %v", err)
+			return
+		}
 		conn.Close()
 	}))
 	defer cut.Close()
-	// Proxy que devuelve la URL pedida en una página de error no JSON.
+	// Proxy que devuelve la URL pedida en una página de error no JSON. El
+	// relleno deja el token cruzando el corte de 200 bytes del mensaje.
 	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		code := http.StatusBadGateway
 		if strings.HasSuffix(r.URL.Path, "/getChat") {
 			code = http.StatusNotFound
 		}
 		w.WriteHeader(code)
-		_, _ = io.WriteString(w, "<html>error en "+r.URL.Path+"</html>")
+		pad := strings.Repeat("x", 150)
+		_, _ = io.WriteString(w, "<html>"+pad+" error en "+r.URL.Path+"</html>")
 	}))
 	defer echo.Close()
 
@@ -341,11 +349,17 @@ func TestNetworkErrorNoTokenLeak(t *testing.T) {
 			if err == nil {
 				t.Fatal("esperado error")
 			}
-			if strings.Contains(err.Error(), validToken) {
-				t.Fatalf("token filtrado: %v", err)
+			secret := validToken[strings.IndexByte(validToken, ':')+1:]
+			// Ni el token ni un prefijo suyo (corte por truncado), en ningún
+			// eslabón de la cadena.
+			for e := err; e != nil; e = errors.Unwrap(e) {
+				if strings.Contains(e.Error(), secret[:8]) {
+					t.Fatalf("token filtrado en %T: %v", e, e)
+				}
 			}
-			if !strings.Contains(err.Error(), RedactToken(validToken)) {
-				t.Fatalf("esperada la forma redactada en %q", err)
+			var ue *url.Error
+			if errors.As(err, &ue) && !strings.Contains(ue.URL, RedactToken(validToken)) {
+				t.Fatalf("*url.Error.URL sin redactar: %q", ue.URL)
 			}
 		})
 	}
