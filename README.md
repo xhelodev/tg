@@ -95,6 +95,37 @@ tg send --chat -100123 --thread 42 "en el tópico"
 
 Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.txt)).
 
+### Skill para agentes (workflow de este repo)
+
+[`skills/tg/SKILL.md`](skills/tg/SKILL.md) enseña a un agente cómo trabajar aquí:
+constraints duros, build/test antes de cada PR y el flujo de PR (con el revisor
+automático). Instálala así:
+
+**Proyecto** (equipo; se comparte por git):
+
+```bash
+# Claude Code / claude CLI — skill de proyecto
+mkdir -p .claude/skills && cp -r skills/tg .claude/skills/
+
+# Cursor — regla de proyecto (una sola línea de frontmatter extra)
+mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'; cat skills/tg/SKILL.md; } > .cursor/rules/tg.mdc
+
+# OpenCode, Codex CLI y la mayoría de agentes: ya leen AGENTS.md; no hay que instalar nada.
+```
+
+**Personal / global** (todos tus proyectos en esta máquina):
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/
+
+# OpenCode
+mkdir -p ~/.config/opencode/skills && cp -r skills/tg ~/.config/opencode/skills/
+```
+
+Si ya tienes el repo clonado, un symlink evita duplicar el archivo
+(`ln -s $(pwd)/skills/tg ~/.claude/skills/tg`) y la skill se actualiza con `git pull`.
+
 ### Autenticación (detalle)
 
 `tg login` valida el token con `getMe`, lo guarda en el perfil activo de
