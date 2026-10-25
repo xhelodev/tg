@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, go: "1.22.x" } # mínimo soportado (go.mod)
+          - { os: ubuntu-latest, go: stable }
+          - { os: macos-latest, go: stable }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - name: vet + gofmt
+        run: make vet
+      - name: unit tests
+        run: go test -count=1 ./...
+      - name: unit tests (-race)
+        if: runner.os == 'Linux' && matrix.go == 'stable'
+        run: go test -race -count=1 ./...
+      - name: static build
+        run: CGO_ENABLED=0 go build -o bin/tg ./cmd/tg && ./bin/tg version
+      - name: cross build (windows, linux/arm64)
+        if: runner.os == 'Linux' && matrix.go == 'stable'
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /dev/null ./cmd/tg
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/tg
+      - name: zero deps
+        if: runner.os == 'Linux'
+        run: |
+          if grep -q '^require' go.mod; then
+            echo "go.mod tiene dependencias externas"; exit 1
+          fi
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: shellcheck
+        run: shellcheck -S warning install.sh scripts/smoke.sh
+      - name: install.sh (dry-run + real, HOME temporal)
+        run: |
+          bash -n install.sh
+          # Copia sin remote: install.sh no puede "actualizar" a origin/main y
+          # compila exactamente el código de este commit.
+          src="$RUNNER_TEMP/src"
+          cp -r . "$src" && git -C "$src" remote remove origin
+          cd "$src"
+          export HOME="$RUNNER_TEMP/home" TG_NO_PATH=1 TG_INSTALL_DIR="$RUNNER_TEMP/bin"
+          mkdir -p "$HOME"
+          ./install.sh --dry-run
+          ./install.sh --skill
+          "$TG_INSTALL_DIR/tg" version
+          test -f "$HOME/.claude/skills/tg/SKILL.md"
+
+  # Pruebas reales contra Telegram. Requiere los secrets TG_BOT_TOKEN y
+  # TG_TEST_CHAT (Settings → Secrets and variables → Actions). Los PRs desde
+  # forks no reciben secrets, así que ahí se salta.
+  smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: smoke # un solo run a la vez contra el bot
+    env:
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_TEST_CHAT: ${{ secrets.TG_TEST_CHAT }}
+    steps:
+      - name: secrets disponibles?
+        id: check
+        run: |
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_TEST_CHAT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::smoke saltado: faltan los secrets TG_BOT_TOKEN / TG_TEST_CHAT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+      - uses: actions/setup-go@v5
+        if: steps.check.outputs.ok == 'true'
+        with:
+          go-version: stable
+      - name: smoke (Bot API real)
+        if: steps.check.outputs.ok == 'true'
+        run: make smoke
