@@ -17,6 +17,7 @@ jobs:
   test:
     name: test (go ${{ matrix.go }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +53,7 @@ jobs:
 
   scripts:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -74,12 +76,16 @@ jobs:
           "$TG_INSTALL_DIR/tg" version
           test -f "$HOME/.claude/skills/tg/SKILL.md"
 
-  # Pruebas reales contra Telegram. Requiere los secrets TG_BOT_TOKEN y
-  # TG_TEST_CHAT (Settings → Secrets and variables → Actions). Los PRs desde
-  # forks no reciben secrets, así que ahí se salta.
+  # Pruebas reales contra Telegram. Los secrets TG_BOT_TOKEN y TG_TEST_CHAT
+  # van en el Environment "telegram" (Settings → Environments), no a nivel de
+  # repo: así un PR que edite este workflow y quite `environment:` no los ve,
+  # y con "Required reviewers" en el environment cada run espera aprobación.
+  # Los PRs desde forks no reciben secrets: ahí se salta.
   smoke:
-    needs: test
+    needs: [test, scripts]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: telegram
     concurrency:
       group: smoke # un solo run a la vez contra el bot
     env:
