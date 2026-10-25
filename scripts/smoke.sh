@@ -9,6 +9,9 @@
 #   make smoke                    # builds ./bin/tg first
 #   TG=./bin/tg scripts/smoke.sh
 #   TG_API_BASE=http://localhost:8081 scripts/smoke.sh   # local Bot API server
+#
+# In GitHub Actions it also writes passed/total/failed to $GITHUB_OUTPUT
+# (the notify job reports them to Telegram).
 # ============================================================================
 set -euo pipefail
 
@@ -29,8 +32,14 @@ OUT="$(mktemp)"
 EMPTY_XDG="$(mktemp -d)"
 IDS=()
 DELETED=""
+PASS=0
+FAILED=""
+TOTAL="$(grep -c '^run "' "$0")"
 cleanup() {
   local id
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    { echo "passed=$PASS"; echo "total=$TOTAL"; echo "failed=$FAILED"; } >>"$GITHUB_OUTPUT"
+  fi
   # ${a[@]+...}: an empty array is "unbound" under set -u in bash < 4.4.
   for id in ${IDS[@]+"${IDS[@]}"}; do
     [[ -n "$id" && "$id" != "$DELETED" ]] || continue
@@ -40,8 +49,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-PASS=0
-fail() { echo "FAIL: $*" >&2; [[ -s "$OUT" ]] && sed 's/^/    /' "$OUT" >&2; exit 1; }
+fail() { FAILED="$*"; echo "FAIL: $*" >&2; [[ -s "$OUT" ]] && sed 's/^/    /' "$OUT" >&2; exit 1; }
 
 # Anything shaped like a bot token (real or the fake one below); the
 # redacted form "123456789:***" does not match.
@@ -120,4 +128,4 @@ run "token incorrecto → 4" 4 env TG_BOT_TOKEN=123456789:AAAAAAAAAAAAAAAAAAAAAA
 run "delete" 0 tg delete --chat "$CHAT" --message-id "$id"
 DELETED="$id"  # cleanup skips it
 
-echo "smoke: $PASS checks OK"
+echo "smoke: $PASS/$TOTAL checks OK"

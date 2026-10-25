@@ -34,9 +34,6 @@ jobs:
         run: make vet
       - name: unit tests
         run: go test -count=1 ./...
-      - name: unit tests (-race)
-        if: runner.os == 'Linux' && matrix.go == 'stable'
-        run: go test -race -count=1 ./...
       - name: static build
         run: CGO_ENABLED=0 go build -o bin/tg ./cmd/tg && ./bin/tg version
       - name: cross build (windows, linux/arm64)
@@ -51,6 +48,31 @@ jobs:
             echo "go.mod tiene dependencias externas"; exit 1
           fi
 
+  # Tests con -race, y el conteo de tests que reporta la notificación
+  # (fuera de la matriz: los outputs de un job con matrix no son fiables).
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      passed: ${{ steps.unit.outputs.passed }}
+      total: ${{ steps.unit.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: unit tests (-race)
+        id: unit
+        shell: bash
+        run: |
+          code=0
+          go test -race -count=1 -json ./... > "$RUNNER_TEMP/test.json" || code=$?
+          jq -j 'select(.Action == "output") | .Output' "$RUNNER_TEMP/test.json"
+          count() { jq -s "[.[] | select(.Test and ($1))] | length" "$RUNNER_TEMP/test.json"; }
+          echo "passed=$(count '.Action == "pass"')" >> "$GITHUB_OUTPUT"
+          echo "total=$(count '.Action == "pass" or .Action == "fail" or .Action == "skip"')" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
   scripts:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -60,7 +82,7 @@ jobs:
         with:
           go-version: stable
       - name: shellcheck
-        run: shellcheck -S warning install.sh scripts/smoke.sh
+        run: shellcheck -S warning install.sh scripts/smoke.sh scripts/ci-notify.sh
       - name: install.sh (dry-run + real, HOME temporal)
         run: |
           bash -n install.sh
@@ -82,10 +104,14 @@ jobs:
   # y con "Required reviewers" en el environment cada run espera aprobación.
   # Los PRs desde forks no reciben secrets: ahí se salta.
   smoke:
-    needs: [test, scripts]
+    needs: [test, race, scripts]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: telegram
+    outputs:
+      passed: ${{ steps.smoke.outputs.passed }}
+      total: ${{ steps.smoke.outputs.total }}
+      failed: ${{ steps.smoke.outputs.failed }}
     concurrency:
       group: smoke # un solo run a la vez contra el bot
     env:
@@ -113,5 +139,53 @@ jobs:
         with:
           go-version: stable
       - name: smoke (Bot API real)
+        id: smoke
         if: steps.check.outputs.ok == 'true'
         run: make smoke
+
+  # Un mensaje a TG_TEST_CHAT con el resumen del run: silencioso si todo
+  # pasó, con sonido si algo falló. No se envía si el run se canceló.
+  notify:
+    needs: [test, race, scripts, smoke]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: telegram
+    env:
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_TEST_CHAT: ${{ secrets.TG_TEST_CHAT }}
+    steps:
+      - name: secrets disponibles?
+        id: check
+        run: |
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_TEST_CHAT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::notificación saltada: faltan los secrets"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+      - uses: actions/setup-go@v5
+        if: steps.check.outputs.ok == 'true'
+        with:
+          go-version: stable
+      - name: enviar resumen a Telegram
+        if: steps.check.outputs.ok == 'true'
+        env:
+          # Todo por env (no interpolado en el script): el título del PR es input externo.
+          TEST_RESULT: ${{ needs.test.result == 'success' && needs.race.result || needs.test.result }}
+          SCRIPTS_RESULT: ${{ needs.scripts.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          UNIT_PASSED: ${{ needs.race.outputs.passed }}
+          UNIT_TOTAL: ${{ needs.race.outputs.total }}
+          SMOKE_PASSED: ${{ needs.smoke.outputs.passed }}
+          SMOKE_TOTAL: ${{ needs.smoke.outputs.total }}
+          SMOKE_FAILED: ${{ needs.smoke.outputs.failed }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF_NAME: ${{ github.head_ref || github.ref_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          CGO_ENABLED=0 go build -o bin/tg ./cmd/tg
+          TG=./bin/tg scripts/ci-notify.sh
