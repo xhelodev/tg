@@ -53,7 +53,10 @@ Sin tags publicados, `@latest` es el último commit de `main` y el module proxy
 puede tardar unos minutos en verlo; `--ref main` lo fuerza.
 
 `./install.sh --help` y `--dry-run` documentan `--ref`, `--dir` y `TG_INSTALL_DIR`.
-Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar.
+Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar,
+y antes actualiza el clone existente desde origin (fetch + fast-forward de la rama actual,
+o `origin/HEAD` si está detached); si no puede (sin red, rama divergida), avisa y compila
+el estado actual sin abortar.
 Tras instalar, si el binario no está en `PATH`, añade el `export PATH` al rc de tu
 shell de login (`$SHELL`: bash → `~/.bashrc`, zsh → `~/.zshrc`); es idempotente y
 se puede desactivar con `TG_NO_PATH=1`.

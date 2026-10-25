@@ -94,6 +94,29 @@ REPO_DIR="$(resolve_repo_dir)"
 ensure_clone() {
   if [[ -f "$REPO_DIR/cmd/tg/main.go" ]]; then
     echo "→ usando repo existente: $REPO_DIR"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ git -C $REPO_DIR fetch origin && git -C $REPO_DIR merge --ff-only <rama>"
+    elif [[ -d "$REPO_DIR/.git" ]] && git -C "$REPO_DIR" fetch origin --prune 2>/tmp/tg-install-pull.err; then
+      echo "→ actualizando clone desde origin"
+      local branch
+      branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+      if [[ "$branch" == "HEAD" ]]; then
+        # HEAD detached: avanzar a origin/HEAD (fetch lo marca not-for-merge,
+        # así que FETCH_HEAD no sirve aquí)
+        if git -C "$REPO_DIR" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then
+          git -C "$REPO_DIR" merge --ff-only origin/HEAD 2>>/tmp/tg-install-pull.err \
+            || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
+        else
+          git -C "$REPO_DIR" checkout -q --detach origin/main 2>>/tmp/tg-install-pull.err \
+            || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
+        fi
+      elif ! git -C "$REPO_DIR" merge --ff-only "origin/$branch" 2>>/tmp/tg-install-pull.err; then
+        echo "aviso: no se pudo actualizar '$branch' (¿rama local divergida?); se compila el estado actual" >&2
+        [[ -f /tmp/tg-install-pull.err ]] && cat /tmp/tg-install-pull.err >&2
+      fi
+    elif [[ "$DRY_RUN" -eq 0 ]]; then
+      echo "aviso: no se pudo contactar origin (¿sin red?); se compila el estado actual" >&2
+    fi
     return
   fi
   echo "→ clonando $REPO_URL → $REPO_DIR"
