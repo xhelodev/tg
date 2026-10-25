@@ -1,7 +1,28 @@
 #!/usr/bin/env bash
-# install.sh — clona (o reutiliza) github.com/xhelodev/tg e instala el binario tg.
-# Repo público: requiere git + Go ≥ 1.22. Si ya hay un clone local, no vuelve a clonar.
+# ============================================================================
+# install.sh — installer for the tg CLI (https://github.com/xhelodev/tg)
+#
+# What it does (nothing else):
+#   1. Downloads the source code from GitHub (or reuses a local clone,
+#      updating it with a fast-forward pull).
+#   2. Compiles it with the Go toolchain already on your machine.
+#   3. Places the single static binary `tg` in your Go bin directory
+#      (or TG_INSTALL_DIR / PREFIX if you set one).
+#   4. If that directory is not in your PATH, appends one `export PATH=...`
+#      line to your shell's rc file (~/.bashrc or ~/.zshrc), only once.
+#
+# What it does NOT do: no telemetry, no background processes, no writing
+# outside $PREFIX, the repo clone and your shell rc file. Every network
+# access goes to github.com over HTTPS. Read it before running it — that
+# is the point of shipping a script instead of a curl|bash blob.
+#
+# Requirements: git and Go >= 1.22 in PATH.
+# ============================================================================
 set -euo pipefail
+
+# Where the user invoked the script: Cursor project-rules are looked up here,
+# even though the script later cd's into the repo clone to build.
+INVOCATION_DIR="$PWD"
 
 REPO_URL="https://github.com/xhelodev/tg.git"
 
@@ -15,6 +36,8 @@ Installs the tg CLI (CGO_ENABLED=0) into PREFIX or TG_INSTALL_DIR
 Options:
   -h, --help     Show this help
   --dry-run      Print actions without installing
+  --skill        Also install the agent skill (SKILL.md) for detected agents
+  --skill-only   Install only the agent skill (no build, no PATH changes)
   --dir DIR      Working clone directory (default: ./tg or current repo)
   --ref REF      git ref to checkout (default: HEAD / default branch)
 
@@ -31,20 +54,27 @@ Examples:
 USAGE
 }
 
+# --- Parse command-line options -------------------------------------------
 DRY_RUN=0
 CLONE_DIR=""
 REF=""
+WANT_SKILL=0   # --skill:     install CLI + agent skill
+SKILL_ONLY=0   # --skill-only: skip build/PATH, install just the skill
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --skill) WANT_SKILL=1; shift ;;
+    --skill-only) WANT_SKILL=1; SKILL_ONLY=1; shift ;;
     --dir) CLONE_DIR="${2:-}"; shift 2 ;;
     --ref) REF="${2:-}"; shift 2 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
+# --- Small helpers ----------------------------------------------------------
+# run(): executes a command, or just prints it in --dry-run mode.
 run() {
   if [[ "$DRY_RUN" -eq 1 ]]; then
     echo "+ $*"
@@ -59,12 +89,17 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "se necesita '$1' en PATH"
 }
 
+# --- Check build dependencies (git + Go) ------------------------------------
+# --skill-only doesn't build anything: git is enough there.
 need_cmd git
-need_cmd go
+if [[ "$SKILL_ONLY" -eq 0 ]]; then
+  need_cmd go
+  GO_VER="$(go env GOVERSION 2>/dev/null || go version)"
+  echo "→ Go: $GO_VER"
+fi
 
-GO_VER="$(go env GOVERSION 2>/dev/null || go version)"
-echo "→ Go: $GO_VER"
-
+# --- Decide where the binary goes -------------------------------------------
+# Priority: TG_INSTALL_DIR > PREFIX > $(go env GOPATH)/bin (Go's default).
 PREFIX="${TG_INSTALL_DIR:-${PREFIX:-}}"
 if [[ -z "$PREFIX" ]]; then
   PREFIX="$(go env GOPATH)/bin"
@@ -72,16 +107,20 @@ fi
 mkdir -p "$PREFIX" 2>/dev/null || true
 echo "→ PREFIX=$PREFIX"
 
-# Detect if we are already inside the tg repo
+# --- Locate the source code --------------------------------------------------
+# Reuse an existing checkout when we can, so a second run never re-downloads.
 resolve_repo_dir() {
+  # Explicit override: TG_REPO_DIR pointing at a real tg checkout.
   if [[ -n "${TG_REPO_DIR:-}" && -f "${TG_REPO_DIR}/cmd/tg/main.go" ]]; then
     echo "$TG_REPO_DIR"
     return
   fi
+  # Already inside the tg repo? Use the current directory.
   if [[ -f "./cmd/tg/main.go" && -f "./go.mod" ]]; then
     pwd
     return
   fi
+  # User-provided --dir, else ./tg next to where the script runs.
   if [[ -n "$CLONE_DIR" ]]; then
     echo "$CLONE_DIR"
     return
@@ -91,6 +130,7 @@ resolve_repo_dir() {
 
 REPO_DIR="$(resolve_repo_dir)"
 
+# --- Get the source: clone fresh, or refresh an existing clone ---------------
 ensure_clone() {
   if [[ -f "$REPO_DIR/cmd/tg/main.go" ]]; then
     echo "→ usando repo existente: $REPO_DIR"
@@ -101,8 +141,8 @@ ensure_clone() {
       local branch
       branch="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
       if [[ "$branch" == "HEAD" ]]; then
-        # HEAD detached: avanzar a origin/HEAD (fetch lo marca not-for-merge,
-        # así que FETCH_HEAD no sirve aquí)
+        # HEAD detached: advance to origin/HEAD (fetch marks it not-for-merge,
+        # so FETCH_HEAD is useless here).
         if git -C "$REPO_DIR" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then
           git -C "$REPO_DIR" merge --ff-only origin/HEAD 2>>/tmp/tg-install-pull.err \
             || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
@@ -111,6 +151,7 @@ ensure_clone() {
             || echo "aviso: no se pudo avanzar el HEAD detached; se compila el estado actual" >&2
         fi
       elif ! git -C "$REPO_DIR" merge --ff-only "origin/$branch" 2>>/tmp/tg-install-pull.err; then
+        # Diverged local branch: warn, but still build what is on disk.
         echo "aviso: no se pudo actualizar '$branch' (¿rama local divergida?); se compila el estado actual" >&2
         [[ -f /tmp/tg-install-pull.err ]] && cat /tmp/tg-install-pull.err >&2
       fi
@@ -138,8 +179,10 @@ EOF
 
 ensure_clone
 
+# --- Sanity-check the source tree before building ----------------------------
 if [[ "$DRY_RUN" -eq 0 ]]; then
   cd "$REPO_DIR"
+  # Optional --ref: build a specific tag/branch/commit instead of HEAD.
   if [[ -n "$REF" ]]; then
     git fetch --tags origin 2>/dev/null || true
     git checkout "$REF"
@@ -151,6 +194,65 @@ else
   echo "+ cd $REPO_DIR"
 fi
 
+# --- Install the agent skill (skills/tg/SKILL.md) ----------------------------
+# Copies the repo's SKILL.md into the skills/rules directory of every coding
+# agent detected on this machine. Detection = the agent's config dir exists:
+#   Claude Code  -> ~/.claude/skills/tg/
+#   OpenCode     -> ~/.config/opencode/skills/tg/
+#   Hermes       -> ~/.hermes/skills/tg/
+#   Codex/ChatGPT-> ~/.codex/skills/tg/
+# If none is found, falls back to ~/.claude/skills/tg. Cursor has no global
+# rules dir, so it is only installed project-level when ./.cursor/rules exists.
+# Copying (not symlinking) keeps each agent self-contained; re-run to update.
+install_skill() {
+  local src="$REPO_DIR/skills/tg/SKILL.md"
+  if [[ ! -f "$src" ]]; then
+    echo "aviso: no se encontró $src; actualiza el clone (git pull)" >&2
+    return 1
+  fi
+  local -a dests=()
+  [[ -d "$HOME/.claude" ]]          && dests+=("$HOME/.claude/skills/tg")
+  [[ -d "$HOME/.config/opencode" ]] && dests+=("$HOME/.config/opencode/skills/tg")
+  [[ -d "$HOME/.hermes" ]]          && dests+=("$HOME/.hermes/skills/tg")
+  [[ -d "$HOME/.codex" ]]           && dests+=("$HOME/.codex/skills/tg")
+  if [[ ${#dests[@]} -eq 0 ]]; then
+    # No agent detected: default to Claude Code's location.
+    dests+=("$HOME/.claude/skills/tg")
+  fi
+  local dest
+  for dest in "${dests[@]}"; do
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ mkdir -p $dest && cp $src $dest/SKILL.md"
+    else
+      mkdir -p "$dest"
+      cp "$src" "$dest/SKILL.md"
+      echo "→ skill instalada en $dest/SKILL.md"
+    fi
+  done
+  # Cursor: rules are project-level (.mdc with its own frontmatter), resolved
+  # against the directory where install.sh was invoked.
+  if [[ -d "$INVOCATION_DIR/.cursor/rules" ]]; then
+    local mdc="$INVOCATION_DIR/.cursor/rules/tg.mdc"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ (frontmatter + skill) > $mdc"
+    else
+      {
+        printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'
+        cat "$src"
+      } > "$mdc"
+      echo "→ skill instalada como regla de Cursor en $mdc"
+    fi
+  fi
+}
+
+# --- Build the static binary and drop it into $PREFIX ------------------------
+if [[ "$SKILL_ONLY" -eq 1 ]]; then
+  echo "→ --skill-only: saltando build y PATH; instalando solo la skill"
+  install_skill
+  exit 0
+fi
+
+# Stamp version/commit into the binary so `tg version` can report them.
 VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "→ go build (CGO_ENABLED=0) PREFIX=$PREFIX"
@@ -170,9 +272,10 @@ fi
 echo "✓ instalado: $BIN"
 "$BIN" version || true
 
-# --- PATH: asegurar que PREFIX esté en el PATH de shells interactivas ---
-# Detecta la shell de login ($SHELL): zsh → ~/.zshrc, bash → ~/.bashrc.
-# Idempotente: no duplica la línea si el rc ya menciona PREFIX.
+# --- Make sure `tg` is callable ----------------------------------------------
+# If $PREFIX is missing from PATH, append one export line to the login
+# shell's rc file ($SHELL decides: zsh -> ~/.zshrc, bash -> ~/.bashrc).
+# Idempotent: never duplicates the line; TG_NO_PATH=1 skips this entirely.
 ensure_path() {
   if [[ ":$PATH:" == *":$PREFIX:"* ]]; then
     echo "→ $PREFIX ya está en PATH"
@@ -189,6 +292,8 @@ ensure_path() {
       rc="$HOME/.zshrc"
       ;;
     bash)
+      # bash login shells on macOS read .bash_profile; prefer it when
+      # .bashrc is absent but .bash_profile exists.
       if [[ ! -f "$HOME/.bashrc" && -f "$HOME/.bash_profile" ]]; then
         rc="$HOME/.bash_profile"
       else
@@ -196,6 +301,7 @@ ensure_path() {
       fi
       ;;
     *)
+      # Unknown shell: don't guess, print the line for the user to add.
       echo "aviso: shell '$shell_name' no soportada; añade a tu rc:"
       echo "  export PATH=\"$PREFIX:\$PATH\""
       return
@@ -219,5 +325,9 @@ ensure_path() {
 }
 
 ensure_path
+
+if [[ "$WANT_SKILL" -eq 1 ]]; then
+  install_skill
+fi
 
 echo "Prueba: tg login && tg me"

@@ -1,6 +1,7 @@
 # AGENTS.md — guía para agentes de código
 
 Docs humanas: [README.md](README.md). Este archivo es la referencia compacta para LLMs/agentes.
+Workflow de PR (build/test, revisor automático): [skills/tg/SKILL.md](skills/tg/SKILL.md).
 
 ## Qué es
 
@@ -79,7 +80,7 @@ tg version
 tg update [--ref vX.Y.Z|main] [--dry-run] # go install @latest sobre el binario actual
 ```
 
-Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
+Los flags van después del comando (`tg me --json`). Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
 `--protect`, `--reply-to`, `--no-preview`, `--api-base`, `--timeout`, `--profile`, `--no-retry`.
 
 ## Scripting
