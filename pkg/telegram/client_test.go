@@ -299,3 +299,63 @@ func TestDeletePinReact(t *testing.T) {
 		}
 	}
 }
+
+// Los errores de red de net/http incluyen la URL, que lleva el token: nunca
+// deben llegar al usuario sin redactar (ni romper errors.Is/As).
+func TestNetworkErrorNoTokenLeak(t *testing.T) {
+	// Servidor que corta la conexión sin responder.
+	cut := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("sin Hijacker")
+		}
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer cut.Close()
+	// Proxy que devuelve la URL pedida en una página de error no JSON.
+	echo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		code := http.StatusBadGateway
+		if strings.HasSuffix(r.URL.Path, "/getChat") {
+			code = http.StatusNotFound
+		}
+		w.WriteHeader(code)
+		_, _ = io.WriteString(w, "<html>error en "+r.URL.Path+"</html>")
+	}))
+	defer echo.Close()
+
+	cases := []struct {
+		name string
+		base string
+		call func(c *Client) error
+	}{
+		{"conexión rechazada", "http://127.0.0.1:1", func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"conexión cortada", cut.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"proxy 502 con la URL", echo.URL, func(c *Client) error { _, err := c.GetMe(context.Background()); return err }},
+		{"proxy 404 con la URL", echo.URL, func(c *Client) error { _, err := c.GetChat(context.Background(), "1"); return err }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := New(validToken, WithBaseURL(tc.base), WithLimiter(nil), WithNoRetry())
+			err := tc.call(c)
+			if err == nil {
+				t.Fatal("esperado error")
+			}
+			if strings.Contains(err.Error(), validToken) {
+				t.Fatalf("token filtrado: %v", err)
+			}
+			if !strings.Contains(err.Error(), RedactToken(validToken)) {
+				t.Fatalf("esperada la forma redactada en %q", err)
+			}
+		})
+	}
+
+	// La cadena de errores sigue intacta: la cancelación se distingue.
+	c, _ := New(validToken, WithBaseURL(cut.URL), WithLimiter(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.GetMe(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("errors.Is(context.Canceled) perdido: %v", err)
+	}
+}

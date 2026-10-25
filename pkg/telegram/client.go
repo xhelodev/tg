@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -147,6 +149,32 @@ func (c *Client) redactedURL(method string) string {
 	return fmt.Sprintf("%s/bot%s/%s", c.baseURL, c.TokenRedacted(), method)
 }
 
+// netErr envuelve err como NetworkError sin el token: los errores de
+// net/http (*url.Error) incluyen la URL completa, y esa URL lleva el token
+// ("…/bot<TOKEN>/getMe"). La cadena de errores se conserva (errors.Is/As).
+func (c *Client) netErr(err error) *NetworkError {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = strings.ReplaceAll(ue.URL, c.token, c.TokenRedacted())
+	}
+	if strings.Contains(err.Error(), c.token) {
+		err = &redactedError{
+			msg: strings.ReplaceAll(err.Error(), c.token, c.TokenRedacted()),
+			err: err,
+		}
+	}
+	return &NetworkError{Err: err}
+}
+
+// redactedError sustituye el mensaje de un error que contenía el token.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
 // doJSON envía un body JSON y deserializa el result.
 func (c *Client) doJSON(ctx context.Context, method string, payload any, chatID string, result any) error {
 	var body []byte
@@ -195,7 +223,7 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		url := c.methodURL(method)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 		if err != nil {
-			return &NetworkError{Err: err}
+			return c.netErr(err)
 		}
 		if contentType != "" && body != nil {
 			req.Header.Set("Content-Type", contentType)
@@ -214,7 +242,7 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 		if err != nil {
 			// Fallo de conexión previo al envío completo: reintentable en getMe etc.
 			// Para send, solo reintentamos 429 (manejado abajo); aquí devolvemos red.
-			return &NetworkError{Err: err}
+			return c.netErr(err)
 		}
 
 		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
@@ -225,19 +253,22 @@ func (c *Client) do(ctx context.Context, method string, newBody func() (io.Reade
 			_ = rc.Close()
 		}
 		if readErr != nil {
-			return &NetworkError{Err: readErr}
+			return c.netErr(readErr)
 		}
 
 		var envelope apiResponse
 		if err := json.Unmarshal(respBody, &envelope); err != nil {
 			// Respuesta no JSON: clasificar por código HTTP, no como bug local.
 			if resp.StatusCode >= 500 {
-				return &NetworkError{Err: fmt.Errorf(
-					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, respBody)}
+				// Un proxy puede devolver la URL (con el token) en su página de error.
+				return c.netErr(fmt.Errorf(
+					"respuesta no JSON del servidor (HTTP %d): %.200s", resp.StatusCode, respBody))
 			}
 			return &APIError{
-				Code:        resp.StatusCode,
-				Description: fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, respBody),
+				Code: resp.StatusCode,
+				Description: strings.ReplaceAll(
+					fmt.Sprintf("respuesta no JSON (HTTP %d): %.200s", resp.StatusCode, respBody),
+					c.token, c.TokenRedacted()),
 			}
 		}
 
