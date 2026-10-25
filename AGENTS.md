@@ -1,6 +1,7 @@
 # AGENTS.md — guía para agentes de código
 
 Docs humanas: [README.md](README.md). Este archivo es la referencia compacta para LLMs/agentes.
+Workflow de PR (build/test, revisor automático): [skills/tg/SKILL.md](skills/tg/SKILL.md).
 
 ## Qué es
 
@@ -74,11 +75,12 @@ tg forward|copy --chat DEST --from SRC --message-id N
 tg action --chat ID --action typing
 tg chat --chat @canal
 tg member --chat @canal
+tg whoami [--once] [--no-reply]       # escucha (getUpdates) y responde chat_id/user_id
 tg version
 tg update [--ref vX.Y.Z|main] [--dry-run] # go install @latest sobre el binario actual
 ```
 
-Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
+Los flags van después del comando (`tg me --json`). Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
 `--protect`, `--reply-to`, `--no-preview`, `--api-base`, `--timeout`, `--profile`, `--no-retry`.
 
 ## Scripting
@@ -91,7 +93,7 @@ Flags globales útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--s
 
 ## Fuera de alcance (v1)
 
-Webhooks, daemon `getUpdates`, callbacks, pagos, polls, stories, inline mode.
+Webhooks, daemon `getUpdates` (salvo el helper interactivo `tg whoami`), callbacks, pagos, polls, stories, inline mode.
 
 ## Build / test
 

@@ -73,7 +73,7 @@ func Run(args []string, ver VersionInfo) int {
 	case "update":
 		return cmdUpdate(ctx, rest, ver)
 	case "me", "send", "edit", "edit-caption", "delete", "pin", "unpin",
-		"react", "forward", "copy", "action", "chat", "member":
+		"react", "forward", "copy", "action", "chat", "member", "whoami":
 		return dispatch(ctx, cmd, rest, ver)
 	default:
 		PrintErr("comando desconocido: %s", cmd)
@@ -102,6 +102,7 @@ Comandos:
   action          sendChatAction
   chat            getChat
   member          getChatMember
+  whoami          escucha y responde con chat_id/user_id de quien escribe (--once, --no-reply)
   version         versión del binario y Bot API objetivo
   update          reinstala la última versión (go install; --ref v1.2.3|main)
 
@@ -187,6 +188,12 @@ func dispatch(ctx context.Context, cmd string, args []string, ver VersionInfo) i
 	var userID int64
 	if cmd == "member" {
 		fs.Int64Var(&userID, "user-id", 0, "user_id (default: el bot)")
+	}
+
+	var once, noReply bool
+	if cmd == "whoami" {
+		fs.BoolVar(&once, "once", false, "salir tras el primer mensaje")
+		fs.BoolVar(&noReply, "no-reply", false, "solo imprimir; no responder en el chat")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -277,6 +284,8 @@ func dispatch(ctx context.Context, cmd string, args []string, ver VersionInfo) i
 		return runChat(ctx, client, pr, g, prof, pos)
 	case "member":
 		return runMember(ctx, client, pr, g, prof, userID)
+	case "whoami":
+		return runWhoami(ctx, client, pr, g, once, noReply)
 	default:
 		return ExitUsage
 	}

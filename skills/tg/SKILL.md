@@ -51,6 +51,18 @@ temp `HOME`.
   with real behavior; they are load-bearing for other agents.
 - Bump the Bot API version claim without updating the affected methods.
 
+## Adding or changing a command
+
+Keep every surface in sync in the same PR:
+
+1. `internal/cli/root.go`: the `Run`/`dispatch` switch and `printUsage`.
+2. `README.md`: the «Comandos» table (plus a section if it needs explaining).
+3. `AGENTS.md`: the «Comandos» block (and exit codes / scope notes if they change).
+4. Tests with `httptest` (fake Bot API) — never a real token. Check the token
+   never shows up in stdout/stderr (see `TestRun_Me_DryRun_NoTokenLeak`).
+
+Flags go after the command (`tg me --json`); there are no flags before it.
+
 ## Quick layout
 
 ```

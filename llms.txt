@@ -2,6 +2,7 @@
 
 - AGENTS.md — primary guide for AI coding agents (constraints, layout, commands, build)
 - README.md — human-oriented docs (install, BotFather, examples, pitfalls)
+- skills/tg/SKILL.md — repo workflow skill (constraints, build/test, PR flow)
 - LICENSE — MIT (Copyright 2026 Marcelo Aguirre / xhelodev)
 
 Repo: https://github.com/xhelodev/tg

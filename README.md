@@ -56,10 +56,12 @@ tg me                    # valida el token
 tg send --chat <chat_id> "hola"
 ```
 
-Precedencia de autenticación: `--token-file` > `TG_BOT_TOKEN` > `TELEGRAM_BOT_TOKEN` >
-perfil en `~/.config/tg/config.json`. Sin token → exit 3.
-Para el `chat_id`: mándale un mensaje al bot y mira `message.chat.id` en `getUpdates`
-(los grupos/canales usan IDs negativos). `@username` solo resuelve canales públicos.
+Precedencia de autenticación: `--token-file` > `--token` (desaconsejado) > `TG_BOT_TOKEN` >
+`TELEGRAM_BOT_TOKEN` > perfil en `~/.config/tg/config.json`. Sin token → exit 3.
+
+Para el `chat_id`: corre `tg whoami` y escríbele al bot desde el chat que quieras;
+responde con el `chat_id` y tu `user_id` (detalle en [Cómo obtener el `chat_id`](#cómo-obtener-el-chat_id)).
+Los grupos/canales usan IDs negativos; `@username` solo resuelve canales públicos.
 
 ## Comandos
 
@@ -75,9 +77,11 @@ Para el `chat_id`: mándale un mensaje al bot y mira `message.chat.id` en `getUp
 | `tg forward` / `tg copy` | reenvía o copia un mensaje |
 | `tg action` | indicador de estado (`typing`, etc.) |
 | `tg chat` / `tg member` | info de un chat / de un miembro |
+| `tg whoami` | escucha y responde con el `chat_id`/`user_id` de quien le escribe (`--once`, `--no-reply`) |
 | `tg update` | actualiza el binario |
 | `tg version` | versión del binario y Bot API objetivo |
 
+Los flags van **después** del comando (`tg me --json`, no `tg --json me`).
 Flags globales útiles: `--json`, `--quiet/-q`, `--dry-run`, `--verbose`, `--silent/-s`,
 `--protect`, `--reply-to`, `--no-preview`, `--api-base`, `--timeout`, `--profile`, `--no-retry`.
 
@@ -173,12 +177,40 @@ Ejemplo de config:
 
 ### Cómo obtener el `chat_id`
 
-- **DM contigo:** mándale un mensaje al bot, luego:
+`tg whoami` deja el bot escuchando; escríbele desde donde quieras y responde
+(en ese mismo chat) con el `chat_id`, el `thread_id` si es un tópico y el
+`user_id` de quien escribió. Si le **reenvías** un mensaje de otra persona,
+también te da el id de esa persona (salvo que lo oculte por privacidad).
+
+```bash
+tg whoami                    # escucha hasta Ctrl-C
+tg whoami --once -q          # sale con el primer mensaje; imprime solo el destino (p.ej. -100123:42)
+tg whoami --no-reply --json  # no responde en el chat; una línea JSON por mensaje en stdout
+```
+
+El bot responde algo así:
+
+```
+chat_id: -1001234567890
+tipo: supergroup (Equipo)
+thread_id: 42
+user_id: 589215 (@marce, Marcelo A)
+
+tg send --chat -1001234567890:42 "…"
+```
+
+- **Grupos:** con privacy mode (default de BotFather) el bot solo ve comandos
+  y menciones → escribe `/whoami` o `@tu_bot`. Los supergrupos/canales usan IDs negativos tipo `-100…`.
+- **Canales:** el bot tiene que ser admin para ver (y responder) los posts.
+- **Mensajes viejos:** lo que llegó antes de arrancar se descarta sin responder (se lista en stderr).
+- **Un solo lector:** usa `getUpdates`, así que no funciona si el bot tiene
+  webhook, y si otro proceso usa el mismo token (p.ej. Hermes) se pisan → exit 4
+  (conflicto 409). Usa un bot aparte o para el otro proceso un momento.
+- **Sin `tg`:** mándale un mensaje al bot y lee `getUpdates` a mano:
   ```bash
   curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/getUpdates" | python3 -m json.tool
   ```
-  Busca `message.chat.id` (número positivo).
-- **Grupo/canal:** añade el bot, escribe algo (o reenvía un mensaje del grupo a [@userinfobot](https://t.me/userinfobot)), o lee `getUpdates`. Los supergrupos/canales usan IDs negativos tipo `-100…`.
+  Busca `message.chat.id`.
 - **Pitfall:** `@username` **no** resuelve usuarios privados. Aunque el bot tenga un DM abierto, hace falta el ID numérico. `@canal_publico` sí funciona para canales/supergrupos públicos.
 
 ## Exit codes
@@ -213,7 +245,8 @@ Los `file_id` son **por bot**: no se reutilizan entre bots.
 ## Trampas conocidas
 
 1. `@username` falla para usuarios privados → usa ID numérico.
-2. Con `parse_mode=HTML` hay que escapar `&`, `<`, `>` (el CLI escapa por defecto el texto de stdin).
+2. Con `parse_mode=HTML` (el default) hay que escapar `&`, `<`, `>`: el texto se envía tal cual
+   (stdin incluido). Para texto plano usa `--html-escape` o `--parse-mode ""`.
 3. Sin `--thread` en un foro, el mensaje cae en «General».
 4. En DM el bot solo borra **sus** mensajes.
 5. `deleteMessage` necesita el `message_id` exacto; no hay listado histórico.
@@ -222,8 +255,8 @@ Los `file_id` son **por bot**: no se reutilizan entre bots.
 ## Bot API server local
 
 ```bash
-tg --api-base http://localhost:8081 me
-tg --api-base http://localhost:8081 send --photo ./video-grande.mp4 --chat 589215
+tg me --api-base http://localhost:8081
+tg send --api-base http://localhost:8081 --video ./video-grande.mp4 --chat 589215
 ```
 
 Con `--api-base` distinto de `https://api.telegram.org` los límites de subida suben a 2000 MB.
@@ -249,7 +282,7 @@ make cross   # linux/darwin/windows × amd64/arm64
 make smoke   # requiere TG_BOT_TOKEN y TG_TEST_CHAT
 ```
 
-Fuera de alcance en v1: webhooks, `getUpdates` daemon, callbacks, pagos, polls, stories, inline mode.
+Fuera de alcance en v1: webhooks, `getUpdates` daemon (salvo el helper interactivo `tg whoami`), callbacks, pagos, polls, stories, inline mode.
 
 ## Créditos
 
