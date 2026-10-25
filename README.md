@@ -279,7 +279,7 @@ make test
 make vet
 make build
 make cross   # linux/darwin/windows × amd64/arm64
-make smoke   # 20 checks contra Telegram real; requiere TG_BOT_TOKEN y TG_TEST_CHAT
+make smoke   # 21 checks contra Telegram real; requiere TG_BOT_TOKEN y TG_TEST_CHAT
 ```
 
 ### CI

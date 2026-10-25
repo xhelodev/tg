@@ -102,9 +102,10 @@ jobs:
   # van en el Environment "telegram" (Settings → Environments), no a nivel de
   # repo: así un PR que edite este workflow y quite `environment:` no los ve,
   # y con "Required reviewers" en el environment cada run espera aprobación.
-  # Los PRs desde forks no reciben secrets: ahí se salta.
+  # Los PRs desde forks no reciben secrets: ni se arranca el runner.
   smoke:
     needs: [test, race, scripts]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: telegram
@@ -147,7 +148,7 @@ jobs:
   # pasó, con sonido si algo falló. No se envía si el run se canceló.
   notify:
     needs: [test, race, scripts, smoke]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: telegram

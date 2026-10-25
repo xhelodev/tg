@@ -28,9 +28,10 @@ icon() {
   esac
 }
 
+# Anything but success/skipped (failure, cancelled, startup_failure…) is a failure.
 ok=1
 for r in "${TEST_RESULT:-}" "${SCRIPTS_RESULT:-}" "${SMOKE_RESULT:-}"; do
-  [[ "$r" == failure || "$r" == cancelled ]] && ok=0
+  case "$r" in success | skipped) ;; *) ok=0 ;; esac
 done
 
 unit="$(icon "${TEST_RESULT:-}")"
@@ -44,8 +45,12 @@ if [[ -n "${SMOKE_TOTAL:-}" && -n "${SMOKE_PASSED:-}" ]]; then
 fi
 if [[ -n "${SMOKE_FAILED:-}" ]]; then
   smoke+=" — falló: ${SMOKE_FAILED}"
-elif [[ "${SMOKE_RESULT:-}" == skipped || -z "${SMOKE_RESULT:-}" ]]; then
-  smoke+=" (saltado)"
+elif [[ -z "${SMOKE_TOTAL:-}" ]]; then
+  case "${SMOKE_RESULT:-}" in
+    # No outputs: skipped, or "succeeded" without running any check.
+    success | skipped | "") smoke="⏭️ (no se ejecutó)" ;;
+    *) smoke+=" (sin resultados: falló antes de los checks)" ;;
+  esac
 fi
 
 if [[ -n "${PR_NUMBER:-}" ]]; then

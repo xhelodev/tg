@@ -48,6 +48,10 @@ cleanup() {
   rm -rf "$OUT" "$EMPTY_XDG"
 }
 trap cleanup EXIT
+# A runner timeout or Ctrl-C sends a signal: exit so the EXIT trap still
+# deletes the messages and writes the outputs.
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 fail() { FAILED="$*"; echo "FAIL: $*" >&2; [[ -s "$OUT" ]] && sed 's/^/    /' "$OUT" >&2; exit 1; }
 
@@ -105,6 +109,10 @@ run "send stdin + --html-escape" 0 bash -c 'printf "a <b> & c\n" | "$0" send ${2
 add_ids
 
 run "send HTML" 0 tg send --silent --chat "$CHAT" "<b>$stamp</b> <code>html</code>"
+add_ids
+
+# --parse-mode "" = plain text: unbalanced HTML must go through untouched.
+run "send --parse-mode \"\" (texto plano)" 0 tg send --silent --parse-mode "" --chat "$CHAT" "<b>sin cerrar & plano"
 add_ids
 
 run "send --split" 0 tg send --silent --split --chat "$CHAT" "$(printf 'x%.0s' $(seq 1 5000))"
