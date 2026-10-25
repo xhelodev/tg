@@ -7,7 +7,7 @@ BIN     := tg
 # PREFIX / TG_INSTALL_DIR: destino de install-user (default GOPATH/bin)
 PREFIX  ?= $(or $(TG_INSTALL_DIR),$(shell go env GOPATH)/bin)
 
-.PHONY: build test lint vet install install-user cross smoke clean
+.PHONY: build test lint vet install install-user install-skill cross smoke clean
 
 build:
 	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o bin/$(BIN) ./cmd/tg
@@ -30,6 +30,10 @@ install-user:
 	@mkdir -p "$(PREFIX)"
 	CGO_ENABLED=$(CGO) go build -ldflags "$(LDFLAGS)" -o "$(PREFIX)/$(BIN)" ./cmd/tg
 	@echo "→ $(PREFIX)/$(BIN)"
+
+# Instala solo la skill de agente (skills/tg/SKILL.md) en los agentes detectados
+install-skill:
+	./install.sh --skill-only
 
 cross:
 	@mkdir -p dist

@@ -20,6 +20,10 @@
 # ============================================================================
 set -euo pipefail
 
+# Where the user invoked the script: Cursor project-rules are looked up here,
+# even though the script later cd's into the repo clone to build.
+INVOCATION_DIR="$PWD"
+
 REPO_URL="https://github.com/xhelodev/tg.git"
 
 usage() {
@@ -32,6 +36,8 @@ Installs the tg CLI (CGO_ENABLED=0) into PREFIX or TG_INSTALL_DIR
 Options:
   -h, --help     Show this help
   --dry-run      Print actions without installing
+  --skill        Also install the agent skill (SKILL.md) for detected agents
+  --skill-only   Install only the agent skill (no build, no PATH changes)
   --dir DIR      Working clone directory (default: ./tg or current repo)
   --ref REF      git ref to checkout (default: HEAD / default branch)
 
@@ -52,11 +58,15 @@ USAGE
 DRY_RUN=0
 CLONE_DIR=""
 REF=""
+WANT_SKILL=0   # --skill:     install CLI + agent skill
+SKILL_ONLY=0   # --skill-only: skip build/PATH, install just the skill
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --skill) WANT_SKILL=1; shift ;;
+    --skill-only) WANT_SKILL=1; SKILL_ONLY=1; shift ;;
     --dir) CLONE_DIR="${2:-}"; shift 2 ;;
     --ref) REF="${2:-}"; shift 2 ;;
     *) echo "error: unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -80,11 +90,13 @@ need_cmd() {
 }
 
 # --- Check build dependencies (git + Go) ------------------------------------
+# --skill-only doesn't build anything: git is enough there.
 need_cmd git
-need_cmd go
-
-GO_VER="$(go env GOVERSION 2>/dev/null || go version)"
-echo "→ Go: $GO_VER"
+if [[ "$SKILL_ONLY" -eq 0 ]]; then
+  need_cmd go
+  GO_VER="$(go env GOVERSION 2>/dev/null || go version)"
+  echo "→ Go: $GO_VER"
+fi
 
 # --- Decide where the binary goes -------------------------------------------
 # Priority: TG_INSTALL_DIR > PREFIX > $(go env GOPATH)/bin (Go's default).
@@ -182,7 +194,64 @@ else
   echo "+ cd $REPO_DIR"
 fi
 
+# --- Install the agent skill (skills/tg/SKILL.md) ----------------------------
+# Copies the repo's SKILL.md into the skills/rules directory of every coding
+# agent detected on this machine. Detection = the agent's config dir exists:
+#   Claude Code  -> ~/.claude/skills/tg/
+#   OpenCode     -> ~/.config/opencode/skills/tg/
+#   Hermes       -> ~/.hermes/skills/tg/
+#   Codex/ChatGPT-> ~/.codex/skills/tg/
+# If none is found, falls back to ~/.claude/skills/tg. Cursor has no global
+# rules dir, so it is only installed project-level when ./.cursor/rules exists.
+# Copying (not symlinking) keeps each agent self-contained; re-run to update.
+install_skill() {
+  local src="$REPO_DIR/skills/tg/SKILL.md"
+  if [[ ! -f "$src" ]]; then
+    echo "aviso: no se encontró $src; actualiza el clone (git pull)" >&2
+    return 1
+  fi
+  local -a dests=()
+  [[ -d "$HOME/.claude" ]]          && dests+=("$HOME/.claude/skills/tg")
+  [[ -d "$HOME/.config/opencode" ]] && dests+=("$HOME/.config/opencode/skills/tg")
+  [[ -d "$HOME/.hermes" ]]          && dests+=("$HOME/.hermes/skills/tg")
+  [[ -d "$HOME/.codex" ]]           && dests+=("$HOME/.codex/skills/tg")
+  if [[ ${#dests[@]} -eq 0 ]]; then
+    # No agent detected: default to Claude Code's location.
+    dests+=("$HOME/.claude/skills/tg")
+  fi
+  local dest
+  for dest in "${dests[@]}"; do
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ mkdir -p $dest && cp $src $dest/SKILL.md"
+    else
+      mkdir -p "$dest"
+      cp "$src" "$dest/SKILL.md"
+      echo "→ skill instalada en $dest/SKILL.md"
+    fi
+  done
+  # Cursor: rules are project-level (.mdc with its own frontmatter), resolved
+  # against the directory where install.sh was invoked.
+  if [[ -d "$INVOCATION_DIR/.cursor/rules" ]]; then
+    local mdc="$INVOCATION_DIR/.cursor/rules/tg.mdc"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ (frontmatter + skill) > $mdc"
+    else
+      {
+        printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'
+        cat "$src"
+      } > "$mdc"
+      echo "→ skill instalada como regla de Cursor en $mdc"
+    fi
+  fi
+}
+
 # --- Build the static binary and drop it into $PREFIX ------------------------
+if [[ "$SKILL_ONLY" -eq 1 ]]; then
+  echo "→ --skill-only: saltando build y PATH; instalando solo la skill"
+  install_skill
+  exit 0
+fi
+
 # Stamp version/commit into the binary so `tg version` can report them.
 VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -256,5 +325,9 @@ ensure_path() {
 }
 
 ensure_path
+
+if [[ "$WANT_SKILL" -eq 1 ]]; then
+  install_skill
+fi
 
 echo "Prueba: tg login && tg me"
