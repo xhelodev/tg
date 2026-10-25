@@ -10,7 +10,9 @@ Cliente librería (`pkg/telegram`) + CLI (`cmd/tg`). Cero dependencias externas,
 
 ## Instalación
 
-One-liner (clona en `~/.local/share/tg/src`, compila e instala; si `$GOPATH/bin` no está en tu `PATH`, añade el `export` a tu rc):
+One-liner (clona en `~/.local/share/tg/src`, compila e instala; si `$GOPATH/bin` no está en tu `PATH`, añade el `export` a tu rc).
+Si instalaste antes con el script, puede que tengas un clone viejo en `./tg` del directorio
+desde donde lo corriste: ya no se usa y puedes borrarlo.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash

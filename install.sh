@@ -28,7 +28,10 @@ INVOCATION_DIR="$PWD"
 
 REPO_URL="https://github.com/xhelodev/tg.git"
 # Fixed clone location, so curl|bash doesn't leave a ./tg wherever it runs.
-DEFAULT_SRC_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/tg/src"
+# A relative XDG_DATA_HOME is invalid per the XDG spec: ignore it.
+DATA_HOME="${XDG_DATA_HOME:-}"
+[[ "$DATA_HOME" == /* ]] || DATA_HOME="$HOME/.local/share"
+DEFAULT_SRC_DIR="$DATA_HOME/tg/src"
 
 usage() {
   cat <<'USAGE'
@@ -266,9 +269,9 @@ install_skill() {
     else
       {
         # Cursor reads its own frontmatter: drop the skill's, keep the body
-        # (tolerates CRLF).
+        # (tolerates CRLF and trailing spaces on the --- lines).
         printf -- '---\ndescription: Send Telegram messages, alerts and files with the tg CLI; find a chat_id\nglobs:\nalwaysApply: false\n---\n'
-        awk '{ l = $0; sub(/\r$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
+        awk '{ l = $0; sub(/[ \t\r]+$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
       } > "$mdc"
       echo "→ skill instalada como regla de Cursor en $mdc"
     fi
