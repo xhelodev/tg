@@ -113,7 +113,25 @@ mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — re
 # OpenCode, Codex CLI y la mayoría de agentes: ya leen AGENTS.md; no hay que instalar nada.
 ```
 
-**Personal / global** (todos tus proyectos en esta máquina):
+**Personal / global** (todos tus proyectos en esta máquina) — un comando para CLI + skill:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill
+# solo la skill (sin compilar nada):
+curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill-only
+# o, desde un clone:
+make install-skill
+```
+
+Detecta los agentes presentes en la máquina e instala donde existan:
+**Claude Code** (`~/.claude/skills/tg/`), **OpenCode** (`~/.config/opencode/skills/tg/`),
+**Hermes** (`~/.hermes/skills/tg/`), **Codex/ChatGPT** (`~/.codex/skills/tg/`);
+si no encuentra ninguno, cae a `~/.claude/skills/tg/`.
+**Cursor** no tiene reglas globales por fichero: se instala project-level como
+`.cursor/rules/tg.mdc` si el directorio actual tiene `.cursor/rules/`.
+Vuelve a ejecutar el comando para actualizar la skill.
+
+Instalación manual alternativa:
 
 ```bash
 # Claude Code
