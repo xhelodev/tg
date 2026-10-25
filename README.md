@@ -1,42 +1,38 @@
 # tg
 
-CLI en Go para la [Telegram Bot API](https://core.telegram.org/bots/api) (objetivo: **Bot API 10.3**).
+CLI en Go para la [Telegram Bot API](https://core.telegram.org/bots/api) (**Bot API 10.3**).
+Cliente librería (`pkg/telegram`) + CLI (`cmd/tg`). Cero dependencias externas, binario estático (`CGO_ENABLED=0`).
 
-Dos artefactos:
+## Requisitos
 
-1. **`pkg/telegram`** — cliente tipado, solo stdlib, sin CLI ni `os.Exit`.
-2. **`cmd/tg`** — wrapper delgado sobre la librería.
+- Go **≥ 1.22** y `git` (solo para compilar/instalar)
+- Un bot de Telegram: habla con [@BotFather](https://t.me/BotFather), `/newbot`, y guarda el token (nunca lo subas a git)
 
-Cero dependencias externas. Binario estático (`CGO_ENABLED=0`).
+## Instalación
 
-Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.txt)).
-
-## Instalación rápida
-
-Requisito: **Go ≥ 1.22**. Asegúrate de que `$(go env GOPATH)/bin` esté en tu `PATH`.
-
-```bash
-go install github.com/xhelodev/tg/cmd/tg@latest
-```
-
-**Alternativas** (compilar desde fuente; útil sin module proxy o para probar `main`):
-
-```bash
-git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
-```
-
-One-liner (descarga el script y clona el repo si hace falta):
+One-liner (clona, compila e instala; si `$GOPATH/bin` no está en tu `PATH`, añade el `export` a tu rc):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash
 ```
 
-Desde un clone, también puedes usar `make`:
+Alternativas:
 
 ```bash
+# con Go, vía module proxy
+go install github.com/xhelodev/tg/cmd/tg@latest
+
+# clonando el repo
+git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
+
+# con make, desde un clone
 make install                              # → $(go env GOPATH)/bin/tg
 make install-user PREFIX=$HOME/.local/bin # o TG_INSTALL_DIR=...
 ```
+
+El script es legible a propósito: revísalo antes de ejecutarlo.
+Opciones: `./install.sh --help` (`--ref`, `--dir`, `--dry-run`); si reutiliza un clone
+existente lo actualiza antes de compilar; el `export PATH` al rc se desactiva con `TG_NO_PATH=1`.
 
 ### Actualizar
 
@@ -52,57 +48,113 @@ Exit `3` si no hay Go, `5` si `go install` falla (red/proxy).
 Sin tags publicados, `@latest` es el último commit de `main` y el module proxy
 puede tardar unos minutos en verlo; `--ref main` lo fuerza.
 
-`./install.sh --help` y `--dry-run` documentan `--ref`, `--dir` y `TG_INSTALL_DIR`.
-Si ya estás dentro del repo, `./install.sh` construye con `go build` sin volver a clonar,
-y antes actualiza el clone existente desde origin (fetch + fast-forward de la rama actual,
-o `origin/HEAD` si está detached); si no puede (sin red, rama divergida), avisa y compila
-el estado actual sin abortar.
-Tras instalar, si el binario no está en `PATH`, añade el `export PATH` al rc de tu
-shell de login (`$SHELL`: bash → `~/.bashrc`, zsh → `~/.zshrc`); es idempotente y
-se puede desactivar con `TG_NO_PATH=1`.
-
-## Crear el bot (@BotFather)
-
-1. Abre Telegram y habla con [@BotFather](https://t.me/BotFather).
-2. `/newbot` → elige nombre y username.
-3. Copia el token (`123456789:AAH...`). **Nunca lo subas a git ni lo pases por `--token` en scripts compartidos.**
+## Configuración mínima
 
 ```bash
-# Recomendado: tg login (interactivo; no abre el navegador)
-tg login
-# o no interactivo
-tg login --token-file /ruta/segura/token
-
-# Alternativas
-export TG_BOT_TOKEN='123456789:AAH...'
-# o
-echo '123456789:AAH...' > ~/.config/tg/token && chmod 600 ~/.config/tg/token
-tg me --token-file ~/.config/tg/token
+tg login                 # interactivo; guarda el token en ~/.config/tg/ (permisos 0600)
+tg me                    # valida el token
+tg send --chat <chat_id> "hola"
 ```
+
+Precedencia de autenticación: `--token-file` > `TG_BOT_TOKEN` > `TELEGRAM_BOT_TOKEN` >
+perfil en `~/.config/tg/config.json`. Sin token → exit 3.
+Para el `chat_id`: mándale un mensaje al bot y mira `message.chat.id` en `getUpdates`
+(los grupos/canales usan IDs negativos). `@username` solo resuelve canales públicos.
+
+## Comandos
+
+| Comando | Qué hace |
+|---------|----------|
+| `tg login` | guarda el token del bot (valida con `getMe`) |
+| `tg me` | info del bot (valida token) |
+| `tg send` | envía texto/foto/audio/documento (`--photo`, `--parse-mode`, `--split`, stdin con `-`) |
+| `tg edit` / `tg edit-caption` | edita texto o caption de un mensaje |
+| `tg delete` | borra un mensaje |
+| `tg pin` / `tg unpin` | fija / desfija un mensaje |
+| `tg react` | reacciona a un mensaje (`--emoji`) |
+| `tg forward` / `tg copy` | reenvía o copia un mensaje |
+| `tg action` | indicador de estado (`typing`, etc.) |
+| `tg chat` / `tg member` | info de un chat / de un miembro |
+| `tg update` | actualiza el binario |
+| `tg version` | versión del binario y Bot API objetivo |
+
+Flags globales útiles: `--json`, `--quiet/-q`, `--dry-run`, `--verbose`, `--silent/-s`,
+`--protect`, `--reply-to`, `--no-preview`, `--api-base`, `--timeout`, `--profile`, `--no-retry`.
+
+Ejemplos rápidos:
+
+```bash
+tg send 589215 "hola"
+echo hola | tg send 589215
+tg send --to @mi_canal --parse-mode HTML "<b>alerta</b>"
+tg send --photo ./foto.jpg --chat 589215 --caption "cap"
+tg send --chat -100123 --thread 42 "en el tópico"
+```
+
+## Documentación
+
+Para agentes de código: [`AGENTS.md`](AGENTS.md) (también [`llms.txt`](llms.txt)).
+
+### Skill para agentes (workflow de este repo)
+
+[`skills/tg/SKILL.md`](skills/tg/SKILL.md) enseña a un agente cómo trabajar aquí:
+constraints duros, build/test antes de cada PR y el flujo de PR (con el revisor
+automático). Instálala así:
+
+**Proyecto** (equipo; se comparte por git):
+
+```bash
+# Claude Code / claude CLI — skill de proyecto
+mkdir -p .claude/skills && cp -r skills/tg .claude/skills/
+
+# Cursor — regla de proyecto (una sola línea de frontmatter extra)
+mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n\n'; cat skills/tg/SKILL.md; } > .cursor/rules/tg.mdc
+
+# OpenCode, Codex CLI y la mayoría de agentes: ya leen AGENTS.md; no hay que instalar nada.
+```
+
+**Personal / global** (todos tus proyectos en esta máquina) — un comando para CLI + skill:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill
+# solo la skill (sin compilar nada):
+curl -fsSL https://raw.githubusercontent.com/xhelodev/tg/main/install.sh | bash -s -- --skill-only
+# o, desde un clone:
+make install-skill
+```
+
+Detecta los agentes presentes en la máquina e instala donde existan:
+**Claude Code** (`~/.claude/skills/tg/`), **OpenCode** (`~/.config/opencode/skills/tg/`),
+**Hermes** (`~/.hermes/skills/tg/`), **Codex/ChatGPT** (`~/.codex/skills/tg/`);
+si no encuentra ninguno, cae a `~/.claude/skills/tg/`.
+**Cursor** no tiene reglas globales por fichero: se instala project-level como
+`.cursor/rules/tg.mdc` si el directorio actual tiene `.cursor/rules/`.
+Vuelve a ejecutar el comando para actualizar la skill.
+
+Instalación manual alternativa:
+
+```bash
+# Claude Code
+mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/
+
+# OpenCode
+mkdir -p ~/.config/opencode/skills && cp -r skills/tg ~/.config/opencode/skills/
+```
+
+Si ya tienes el repo clonado, un symlink evita duplicar el archivo
+(`ln -s $(pwd)/skills/tg ~/.claude/skills/tg`) y la skill se actualiza con `git pull`.
+
+### Autenticación (detalle)
 
 `tg login` valida el token con `getMe`, lo guarda en el perfil activo de
 `~/.config/tg/config.json` (`$XDG_CONFIG_HOME`) con permisos `0600`, e imprime
 el username/id del bot (nunca el token). La entrada interactiva puede hacer eco;
 usa `--token-file` si prefieres no mostrarlo.
 
-## Cómo obtener el `chat_id`
-
-- **DM contigo:** mándale un mensaje al bot, luego:
-  ```bash
-  curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/getUpdates" | python3 -m json.tool
-  ```
-  Busca `message.chat.id` (número positivo).
-- **Grupo/canal:** añade el bot, escribe algo (o reenvía un mensaje del grupo a [@userinfobot](https://t.me/userinfobot)), o lee `getUpdates`. Los supergrupos/canales usan IDs negativos tipo `-100…`.
-- **Pitfall:** `@username` **no** resuelve usuarios privados. Aunque el bot tenga un DM abierto, hace falta el ID numérico. `@canal_publico` sí funciona para canales/supergrupos públicos.
-
-## Autenticación (precedencia)
-
-1. `--token-file <ruta>`
-2. `TG_BOT_TOKEN`
-3. `TELEGRAM_BOT_TOKEN` (alias Hermes)
-4. Perfil en `~/.config/tg/config.json` (`$XDG_CONFIG_HOME`)
-
-Sin token → **exit 3**, listando los orígenes intentados.
+```bash
+tg login --token-file /ruta/segura/token   # no interactivo
+export TG_BOT_TOKEN='123456789:AAH...'     # por entorno
+```
 
 Ejemplo de config:
 
@@ -119,36 +171,15 @@ Ejemplo de config:
 }
 ```
 
-## Ejemplos
+### Cómo obtener el `chat_id`
 
-```bash
-tg login
-tg me
-tg send --chat 589215 "hola"
-echo hola | tg send 589215
-tg send 589215 -
-tg send --to @mi_canal --parse-mode HTML "<b>alerta</b>"
-tg send --chat -100123 --thread 42 "en el tópico"
-tg send --photo ./foto.jpg --chat 589215 --caption "cap"
-tg send --split --chat 589215 "$(python3 -c 'print("x"*5000)')"
-
-tg edit --chat 589215 --message-id 42 "texto nuevo"
-tg edit-caption --chat 589215 --message-id 42 --caption "nuevo"
-tg delete --chat 589215 --message-id 42
-tg pin --chat 589215 --message-id 42
-tg unpin --chat 589215 --message-id 42
-tg react --chat 589215 --message-id 42 --emoji "👍"
-tg forward --chat 589215 --from 589215 --message-id 42
-tg copy --chat 589215 --from 589215 --message-id 42
-tg action --chat 589215 --action typing
-tg chat --chat @mi_canal
-tg member --chat @mi_canal
-tg version
-tg update
-```
-
-Flags útiles: `--json`, `--quiet`/`-q`, `--dry-run`, `--verbose`, `--silent`/`-s`,
-`--protect`, `--reply-to`, `--no-preview`, `--api-base`, `--timeout`, `--profile`, `--no-retry`.
+- **DM contigo:** mándale un mensaje al bot, luego:
+  ```bash
+  curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/getUpdates" | python3 -m json.tool
+  ```
+  Busca `message.chat.id` (número positivo).
+- **Grupo/canal:** añade el bot, escribe algo (o reenvía un mensaje del grupo a [@userinfobot](https://t.me/userinfobot)), o lee `getUpdates`. Los supergrupos/canales usan IDs negativos tipo `-100…`.
+- **Pitfall:** `@username` **no** resuelve usuarios privados. Aunque el bot tenga un DM abierto, hace falta el ID numérico. `@canal_publico` sí funciona para canales/supergrupos públicos.
 
 ## Exit codes
 
@@ -219,6 +250,11 @@ make smoke   # requiere TG_BOT_TOKEN y TG_TEST_CHAT
 ```
 
 Fuera de alcance en v1: webhooks, `getUpdates` daemon, callbacks, pagos, polls, stories, inline mode.
+
+## Créditos
+
+Creado y mantenido por **Marcelo Aguirre ([@xhelodev](https://github.com/xhelodev))**,
+con revisión automática de PRs a cargo de un agente Hermes (`glm-5.3`).
 
 ## Licencia
 
