@@ -97,8 +97,14 @@ jobs:
         run: |
           if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_TEST_CHAT" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$TG_BOT_TOKEN" ] && [ -z "$TG_TEST_CHAT" ]; then
+            # Sin configurar (forks, o el repo aún sin secrets): no es un fallo.
+            echo "::notice::smoke saltado: faltan los secrets TG_BOT_TOKEN y TG_TEST_CHAT"
           else
-            echo "::notice::smoke saltado: faltan los secrets TG_BOT_TOKEN / TG_TEST_CHAT"
+            # Solo uno de los dos: configuración a medias, mejor fallar que saltar en silencio.
+            [ -n "$TG_BOT_TOKEN" ] || echo "::error::falta el secret TG_BOT_TOKEN en el environment telegram"
+            [ -n "$TG_TEST_CHAT" ] || echo "::error::falta el secret TG_TEST_CHAT en el environment telegram"
+            exit 1
           fi
       - uses: actions/checkout@v4
         if: steps.check.outputs.ok == 'true'
