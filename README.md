@@ -132,7 +132,8 @@ A mano: `mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/`
 
 **`tg-dev` (este repo)** — no hay que instalar nada para Claude Code:
 `.claude/skills/tg-dev` es un symlink versionado a `skills/tg-dev`, así que se
-carga solo al abrir el repo. OpenCode, Codex CLI y la mayoría de agentes ya leen
+carga solo al abrir el repo (en Windows hace falta `git config core.symlinks true`
+antes de clonar, o copiar `skills/tg-dev` a `.claude/skills/` a mano). OpenCode, Codex CLI y la mayoría de agentes ya leen
 [`AGENTS.md`](AGENTS.md). Para Cursor:
 
 ```bash

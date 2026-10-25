@@ -43,7 +43,8 @@ Options:
   --skill        Also install the `tg` agent skill for detected agents
   --skill-only   Install only the agent skill (no build, no PATH changes)
   --dir DIR      Clone directory (default: current repo, else
-                 ${XDG_DATA_HOME:-~/.local/share}/tg/src)
+                 ${XDG_DATA_HOME:-~/.local/share}/tg/src — keep in sync
+                 with DEFAULT_SRC_DIR)
   --ref REF      git ref to checkout (default: HEAD / default branch)
 
 Environment:
@@ -173,6 +174,7 @@ ensure_clone() {
       fi
     elif [[ "$DRY_RUN" -eq 0 ]]; then
       echo "aviso: no se pudo contactar origin (¿sin red?); se compila el estado actual" >&2
+      cat "$ERR_LOG" >&2
     fi
     return
   fi
@@ -257,9 +259,14 @@ install_skill() {
       echo "+ (frontmatter + skill) > $mdc"
     else
       {
-        # Cursor reads its own frontmatter: drop the skill's, keep the body.
+        # Cursor reads its own frontmatter: drop the skill's, keep the body
+        # (tolerates CRLF). Without awk, fall back to the whole file.
         printf -- '---\ndescription: Send Telegram messages, alerts and files with the tg CLI; find a chat_id\nglobs:\nalwaysApply: false\n---\n'
-        awk 'NR==1 && /^---$/ {fm=1; next} fm && /^---$/ {fm=0; next} !fm' "$src"
+        if command -v awk >/dev/null 2>&1; then
+          awk '{ l = $0; sub(/\r$/, "", l) } NR==1 && l == "---" {fm=1; next} fm && l == "---" {fm=0; next} !fm' "$src"
+        else
+          cat "$src"
+        fi
       } > "$mdc"
       echo "→ skill instalada como regla de Cursor en $mdc"
     fi
