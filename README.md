@@ -134,12 +134,13 @@ A mano: `mkdir -p ~/.claude/skills && cp -r skills/tg ~/.claude/skills/`
 
 **`tg-dev` (este repo)** — no hay que instalar nada para Claude Code:
 `.claude/skills/tg-dev` es un symlink versionado a `skills/tg-dev`, así que se
-carga solo al abrir el repo (en Windows hace falta `git config core.symlinks true`
-antes de clonar, o copiar `skills/tg-dev` a `.claude/skills/` a mano). OpenCode, Codex CLI y la mayoría de agentes ya leen
-[`AGENTS.md`](AGENTS.md). Para Cursor:
+carga solo al abrir el repo. En Windows hace falta `git config core.symlinks true`
+antes de clonar, o copiar `skills/tg-dev` a `.claude/skills/` a mano.
+
+OpenCode, Codex CLI y la mayoría de agentes ya leen [`AGENTS.md`](AGENTS.md). Para Cursor:
 
 ```bash
-mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n'; awk 'NR==1&&/^---$/{f=1;next} f&&/^---$/{f=0;next} !f' skills/tg-dev/SKILL.md; } > .cursor/rules/tg-dev.mdc
+mkdir -p .cursor/rules && { printf -- '---\ndescription: tg repo workflow — read before coding or opening PRs\nglobs:\nalwaysApply: true\n---\n'; awk '{l=$0; sub(/[ \t\r]+$/,"",l)} NR==1&&l=="---"{f=1;next} f&&l=="---"{f=0;next} !f' skills/tg-dev/SKILL.md; } > .cursor/rules/tg-dev.mdc
 ```
 
 ### Autenticación (detalle)

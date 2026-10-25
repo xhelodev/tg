@@ -29,6 +29,7 @@ INVOCATION_DIR="$PWD"
 REPO_URL="https://github.com/xhelodev/tg.git"
 # Fixed clone location, so curl|bash doesn't leave a ./tg wherever it runs.
 # A relative XDG_DATA_HOME is invalid per the XDG spec: ignore it.
+: "${HOME:?se necesita HOME definido}"
 DATA_HOME="${XDG_DATA_HOME:-}"
 [[ "$DATA_HOME" == /* ]] || DATA_HOME="$HOME/.local/share"
 DEFAULT_SRC_DIR="$DATA_HOME/tg/src"
@@ -105,6 +106,9 @@ need_cmd() {
 # Private scratch file for git's stderr (shown only on failure), removed on exit.
 ERR_LOG="$(mktemp "${TMPDIR:-/tmp}/tg-install.XXXXXX")"
 trap 'rm -f "$ERR_LOG"' EXIT
+# Ctrl-C / kill during a slow clone: exit through the EXIT trap too.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # --- Check build dependencies (git + Go) ------------------------------------
 # --skill-only doesn't build anything: git is enough there.
@@ -175,7 +179,7 @@ ensure_clone() {
         echo "aviso: no se pudo actualizar '$branch' (¿rama local divergida?); se compila el estado actual" >&2
         cat "$ERR_LOG" >&2
       fi
-    elif [[ "$DRY_RUN" -eq 0 && ! -d "$REPO_DIR/.git" ]]; then
+    elif [[ ! -d "$REPO_DIR/.git" ]]; then
       echo "aviso: $REPO_DIR no es un clone git; se compila tal cual (bórralo para re-clonar)" >&2
     elif [[ "$DRY_RUN" -eq 0 ]]; then
       echo "aviso: no se pudo contactar origin (¿sin red?); se compila el estado actual" >&2
@@ -260,12 +264,12 @@ install_skill() {
   # against the directory where install.sh was invoked.
   if [[ -d "$INVOCATION_DIR/.cursor/rules" ]]; then
     local mdc="$INVOCATION_DIR/.cursor/rules/tg.mdc"
-    if ! command -v awk >/dev/null 2>&1; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ (frontmatter + skill) > $mdc"
+    elif ! command -v awk >/dev/null 2>&1; then
       # Without awk we can't strip the skill's frontmatter; a .mdc with two
       # frontmatter blocks would be malformed, so skip it.
       echo "aviso: sin awk no se instala la regla de Cursor ($mdc)" >&2
-    elif [[ "$DRY_RUN" -eq 1 ]]; then
-      echo "+ (frontmatter + skill) > $mdc"
     else
       {
         # Cursor reads its own frontmatter: drop the skill's, keep the body
