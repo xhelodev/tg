@@ -21,6 +21,7 @@ Options:
 Environment:
   TG_INSTALL_DIR / PREFIX   Install directory for the binary
   TG_REPO_DIR               If set and is this repo, use it instead of cloning
+  TG_NO_PATH=1              Do not touch shell rc files (skip PATH setup)
 
 Examples:
   git clone https://github.com/xhelodev/tg.git && cd tg && ./install.sh
@@ -145,4 +146,55 @@ fi
 
 echo "✓ instalado: $BIN"
 "$BIN" version || true
+
+# --- PATH: asegurar que PREFIX esté en el PATH de shells interactivas ---
+# Detecta la shell de login ($SHELL): zsh → ~/.zshrc, bash → ~/.bashrc.
+# Idempotente: no duplica la línea si el rc ya menciona PREFIX.
+ensure_path() {
+  if [[ ":$PATH:" == *":$PREFIX:"* ]]; then
+    echo "→ $PREFIX ya está en PATH"
+    return
+  fi
+  if [[ "${TG_NO_PATH:-0}" == "1" ]]; then
+    echo "→ TG_NO_PATH=1: no se modifica ningún rc"
+    return
+  fi
+  local shell_name rc
+  shell_name="$(basename "${SHELL:-bash}")"
+  case "$shell_name" in
+    zsh)
+      rc="$HOME/.zshrc"
+      ;;
+    bash)
+      if [[ ! -f "$HOME/.bashrc" && -f "$HOME/.bash_profile" ]]; then
+        rc="$HOME/.bash_profile"
+      else
+        rc="$HOME/.bashrc"
+      fi
+      ;;
+    *)
+      echo "aviso: shell '$shell_name' no soportada; añade a tu rc:"
+      echo "  export PATH=\"$PREFIX:\$PATH\""
+      return
+      ;;
+  esac
+  if grep -qsF "$PREFIX" "$rc"; then
+    echo "→ $rc ya referencia $PREFIX (abre una shell nueva)"
+    return
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "+ echo 'export PATH=\"$PREFIX:\$PATH\"' >> $rc"
+    return
+  fi
+  {
+    echo ""
+    echo "# added by tg install.sh"
+    echo "export PATH=\"$PREFIX:\$PATH\""
+  } >> "$rc"
+  echo "→ añadido export PATH a $rc"
+  echo "  (recarga con: source $rc)"
+}
+
+ensure_path
+
 echo "Prueba: tg login && tg me"
